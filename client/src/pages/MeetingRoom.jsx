@@ -66,10 +66,27 @@ const MeetingRoom = () => {
 
     const peer = new RTCPeerConnection({
       iceServers: [
+        // STUN servers (for discovering public IPs)
         { urls: 'stun:stun.l.google.com:19302' },
         { urls: 'stun:stun1.l.google.com:19302' },
-        { urls: 'stun:stun2.l.google.com:19302' },
-        { urls: 'stun:global.stun.twilio.com:3478' }
+        { urls: 'stun:global.stun.twilio.com:3478' },
+        // TURN servers (MANDATORY for cellular/mobile Symmetric NAT traversal)
+        // Using OpenRelay project for testing NAT traversal. In prod, use standard paid TURN like Twilio/Metered.
+        {
+          urls: 'turn:openrelay.metered.ca:80',
+          username: 'openrelayproject',
+          credential: 'openrelayproject'
+        },
+        {
+          urls: 'turn:openrelay.metered.ca:443',
+          username: 'openrelayproject',
+          credential: 'openrelayproject'
+        },
+        {
+          urls: 'turn:openrelay.metered.ca:443?transport=tcp',
+          username: 'openrelayproject',
+          credential: 'openrelayproject'
+        }
       ]
     });
 
