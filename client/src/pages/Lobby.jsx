@@ -18,10 +18,12 @@ const Lobby = () => {
   const [meetingError, setMeetingError] = useState('');
   const videoRef = useRef(null);
   const streamRef = useRef(null);
+  const [streamObj, setStreamObj] = useState(null);
 
   useEffect(() => {
     let mounted = true;
-    const validateAndStart = async () => {
+
+    const initLobby = async () => {
       try {
         const res = await fetch(`${SERVER_URL}/api/meetings/${id}`);
         if (!res.ok) {
@@ -41,25 +43,35 @@ const Lobby = () => {
         return;
       }
 
-      // If valid, explicitly ask for media in a separate try-catch
+      // If valid, explicitly ask for media ONCE
       try {
-        if (streamRef.current) streamRef.current.getTracks().forEach(t => t.stop());
-        const stream = await navigator.mediaDevices.getUserMedia({ video: camOn, audio: micOn });
-        streamRef.current = stream;
-        if (videoRef.current) videoRef.current.srcObject = stream;
+        const initialStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+        if (!mounted) {
+          initialStream.getTracks().forEach(t => t.stop());
+          return;
+        }
+        
+        // Apply default micOn/camOn states visually
+        initialStream.getAudioTracks().forEach(t => t.enabled = micOn);
+        initialStream.getVideoTracks().forEach(t => t.enabled = camOn);
+        
+        streamRef.current = initialStream;
+        setStreamObj(initialStream);
+        if (videoRef.current) videoRef.current.srcObject = initialStream;
       } catch (mediaErr) {
         console.error('Media error:', mediaErr);
         if (mounted) {
-          alert('Could not access camera/microphone. Please ensure you are using HTTPS, or check device permissions.');
+          alert('Could not access camera/microphone. Ensure you are using HTTPS and have granted permissions.');
           setCamOn(false);
           setMicOn(false);
         }
       }
     };
 
-    validateAndStart();
+    initLobby();
 
     return () => {
+      mounted = false;
       if (streamRef.current) {
         streamRef.current.getTracks().forEach(track => track.stop());
         streamRef.current = null;
@@ -68,7 +80,15 @@ const Lobby = () => {
         videoRef.current.srcObject = null;
       }
     };
-  }, [camOn, micOn]);
+  }, [id]); // Only run once per meeting ID
+
+  // Toggle tracks without recreating the entire MediaStream (which crashes mobile browsers)
+  useEffect(() => {
+    if (streamObj) {
+      streamObj.getAudioTracks().forEach(t => t.enabled = micOn);
+      streamObj.getVideoTracks().forEach(t => t.enabled = camOn);
+    }
+  }, [micOn, camOn, streamObj]);
 
   const handleJoin = () => {
     if (!name.trim()) return alert('Please enter your display name');
