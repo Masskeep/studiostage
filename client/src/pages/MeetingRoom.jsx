@@ -73,7 +73,15 @@ const MeetingRoom = () => {
       ]
     });
 
-    stream.getTracks().forEach(track => peer.addTrack(track, stream));
+    const localTracks = stream?.getTracks() || [];
+    if (localTracks.length > 0) {
+      localTracks.forEach(track => peer.addTrack(track, stream));
+    } else {
+      // If we joined with no media (e.g., cell phone without permission), we MUST add transceivers 
+      // to force an SDP offer to generate, so we can still RECEIVE video from others.
+      peer.addTransceiver('video', { direction: 'recvonly' });
+      peer.addTransceiver('audio', { direction: 'recvonly' });
+    }
 
     peer.onicecandidate = event => {
       if (event.candidate && socketRef.current) {
@@ -140,18 +148,25 @@ const MeetingRoom = () => {
     });
 
     const init = async () => {
+      let stream;
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+        stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
         if (!mounted) { stream.getTracks().forEach(t => t.stop()); return; }
 
         stream.getAudioTracks().forEach(t => { t.enabled = userState.micOn; });
         stream.getVideoTracks().forEach(t => { t.enabled = userState.camOn; });
+      } catch (err) {
+        console.warn('Camera/Mic permission denied or unavailable. Joining as viewer.', err);
+        stream = new MediaStream(); // Blank stream
+        setMicOn(false);
+        setCamOn(false);
+      }
 
-        userStreamRef.current = stream;
-        if (localVideoRef.current) localVideoRef.current.srcObject = stream;
+      userStreamRef.current = stream;
+      if (localVideoRef.current) localVideoRef.current.srcObject = stream;
 
-        // Set up ALL socket listeners
-        socketRef.current.on('connect', () => {
+      // Set up ALL socket listeners - MUST run regardless of camera success
+      socketRef.current.on('connect', () => {
           console.log('Socket connected:', socketRef.current.id);
           setConnectionStatus('connected');
           socketRef.current.emit('join-room', id, socketRef.current.id, userState.name);
@@ -253,9 +268,6 @@ const MeetingRoom = () => {
           socketRef.current.emit('join-room', id, socketRef.current.id, userState.name);
         }
 
-      } catch (err) {
-        console.error('Failed to get local stream', err);
-      }
     };
 
     init();

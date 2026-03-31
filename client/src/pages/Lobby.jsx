@@ -31,27 +31,29 @@ const Lobby = () => {
           }
           return;
         }
-
         if (mounted) setIsValidating(false);
-
-        // Stop any existing tracks first
-        if (streamRef.current) {
-          streamRef.current.getTracks().forEach(t => t.stop());
-        }
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: camOn,
-          audio: micOn
-        });
-        streamRef.current = stream;
-        if (videoRef.current) {
-          videoRef.current.srcObject = stream;
-        }
       } catch (err) {
         if (mounted) {
-          setMeetingError('Error connecting to server.');
+          setMeetingError('Error connecting to signaling server.');
           setIsValidating(false);
         }
-        console.error('Validation or media error:', err);
+        console.error('Validation error:', err);
+        return;
+      }
+
+      // If valid, explicitly ask for media in a separate try-catch
+      try {
+        if (streamRef.current) streamRef.current.getTracks().forEach(t => t.stop());
+        const stream = await navigator.mediaDevices.getUserMedia({ video: camOn, audio: micOn });
+        streamRef.current = stream;
+        if (videoRef.current) videoRef.current.srcObject = stream;
+      } catch (mediaErr) {
+        console.error('Media error:', mediaErr);
+        if (mounted) {
+          alert('Could not access camera/microphone. Please ensure you are using HTTPS, or check device permissions.');
+          setCamOn(false);
+          setMicOn(false);
+        }
       }
     };
 
