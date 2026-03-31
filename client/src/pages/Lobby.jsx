@@ -46,6 +46,9 @@ const Lobby = () => {
 
       // If valid, explicitly ask for media ONCE
       try {
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+          throw new Error('MediaDevices API not available. You must use HTTPS or localhost to access the camera.');
+        }
         const initialStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
         if (!mounted) {
           initialStream.getTracks().forEach(t => t.stop());
@@ -109,6 +112,9 @@ const Lobby = () => {
 
   const requestMediaAccess = async () => {
     try {
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        throw new Error('MediaDevices API not available. You must use HTTPS or localhost to access the camera.');
+      }
       const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
       
       stream.getAudioTracks().forEach(t => t.enabled = true);
