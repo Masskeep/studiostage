@@ -19,6 +19,7 @@ const Lobby = () => {
   const videoRef = useRef(null);
   const streamRef = useRef(null);
   const [streamObj, setStreamObj] = useState(null);
+  const [cameraBlocked, setCameraBlocked] = useState(false);
 
   useEffect(() => {
     let mounted = true;
@@ -61,7 +62,8 @@ const Lobby = () => {
       } catch (mediaErr) {
         console.error('Media error:', mediaErr);
         if (mounted) {
-          alert('Could not access camera/microphone. Ensure you are using HTTPS and have granted permissions.');
+          // Instead of a blocking alert, show a retry button in the UI
+          setCameraBlocked(true);
           setCamOn(false);
           setMicOn(false);
         }
@@ -103,6 +105,25 @@ const Lobby = () => {
     }
 
     navigate(`/room/${id}`, { state: { name: name.trim(), micOn, camOn } });
+  };
+
+  const requestMediaAccess = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+      
+      stream.getAudioTracks().forEach(t => t.enabled = true);
+      stream.getVideoTracks().forEach(t => t.enabled = true);
+      
+      streamRef.current = stream;
+      setStreamObj(stream);
+      if (videoRef.current) videoRef.current.srcObject = stream;
+      
+      setCameraBlocked(false);
+      setCamOn(true);
+      setMicOn(true);
+    } catch (err) {
+      alert("Still unable to access camera. Please check your browser permissions settings or ensure you are deploying on a secure HTTPS connection.");
+    }
   };
 
   if (isValidating) {
@@ -164,6 +185,21 @@ const Lobby = () => {
               playsInline
               style={{ width: '100%', height: '100%', objectFit: 'cover', transform: 'scaleX(-1)' }}
             />
+
+            {cameraBlocked && (
+              <div style={{
+                position: 'absolute', top: 0, left: 0, width: '100%', height: '100%',
+                backgroundColor: 'rgba(0,0,0,0.8)',
+                display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', zIndex: 10
+              }}>
+                <p style={{ color: 'white', marginBottom: '1rem', textAlign: 'center', padding: '0 1rem', fontSize: '0.9rem' }}>
+                  Your phone blocked automatic camera access. 
+                </p>
+                <button onClick={requestMediaAccess} className="btn-primary" style={{ padding: '0.6rem 1.2rem', fontSize: '0.85rem' }}>
+                  Tap to Enable Permissions
+                </button>
+              </div>
+            )}
 
             {/* Camera status badge */}
             <div style={{
