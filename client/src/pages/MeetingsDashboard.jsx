@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { Video, Calendar, Clock, Link, Plus, ChevronRight } from 'lucide-react';
+import { Video, Calendar, Clock, Link, Plus, ChevronRight, LogIn } from 'lucide-react';
 import Navbar from '../components/Navbar';
 
 const SERVER_URL = import.meta.env.VITE_SERVER_URL || 'http://localhost:5001';
@@ -14,6 +14,7 @@ const MeetingsDashboard = () => {
   const [scheduledMeetings, setScheduledMeetings] = useState([]);
   const [copied, setCopied] = useState('');
   const [loading, setLoading] = useState(false);
+  const [joinId, setJoinId] = useState('');
 
   const startInstantMeeting = () => {
     const meetingId = Math.random().toString(36).substring(2, 9);
@@ -62,7 +63,7 @@ const MeetingsDashboard = () => {
         </div>
 
         {/* Quick Actions */}
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem', marginBottom: '3rem' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '1.5rem', marginBottom: '3rem' }}>
           <button
             onClick={startInstantMeeting}
             style={{
@@ -84,6 +85,53 @@ const MeetingsDashboard = () => {
               Start Now <ChevronRight size={18} />
             </div>
           </button>
+
+          {/* Join Meeting by ID */}
+          <div
+            style={{
+              backgroundColor: 'var(--card-bg)',
+              color: 'var(--text-primary)',
+              borderRadius: '20px',
+              padding: '2.5rem',
+              textAlign: 'left',
+              border: '1px solid var(--border-color)',
+              boxShadow: '0 4px 12px rgba(0,0,0,0.04)',
+              transition: 'transform 0.2s, box-shadow 0.2s',
+              display: 'flex',
+              flexDirection: 'column',
+            }}
+          >
+            <LogIn size={40} style={{ marginBottom: '1rem', color: '#10B981' }} />
+            <h2 style={{ fontSize: '1.5rem', marginBottom: '0.5rem', fontFamily: 'var(--font-display)' }}>Join a Meeting</h2>
+            <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', marginBottom: '1.5rem' }}>Enter a meeting ID to join an existing room.</p>
+            <div style={{ display: 'flex', gap: '0.5rem', marginTop: 'auto' }}>
+              <input
+                type="text"
+                placeholder="Enter Meeting ID"
+                value={joinId}
+                onChange={e => setJoinId(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter' && joinId.trim()) navigate(`/room/${joinId.trim()}/lobby`); }}
+                style={{
+                  flex: 1,
+                  padding: '0.8rem 1rem',
+                  borderRadius: '10px',
+                  border: '1px solid var(--border-color)',
+                  backgroundColor: 'var(--bg-color)',
+                  fontSize: '0.95rem',
+                  fontFamily: 'inherit',
+                  color: 'var(--text-primary)',
+                }}
+              />
+              <button
+                className="btn-primary"
+                onClick={() => { if (joinId.trim()) navigate(`/room/${joinId.trim()}/lobby`); }}
+                disabled={!joinId.trim()}
+                style={{ padding: '0.8rem 1.5rem', fontSize: '0.95rem', opacity: joinId.trim() ? 1 : 0.5 }}
+              >
+                Join
+              </button>
+            </div>
+          </div>
 
           <button
             onClick={() => setShowScheduleForm(true)}
