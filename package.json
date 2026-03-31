@@ -1,0 +1,12 @@
+{
+  "name": "studiostage",
+  "private": true,
+  "version": "1.0.0",
+  "scripts": {
+    "install:all": "npm --prefix client install && npm --prefix server install",
+    "dev": "npm --prefix client run dev",
+    "dev:client": "npm --prefix client run dev",
+    "dev:server": "DOTENV_CONFIG_PATH=server/.env node -r ./server/node_modules/dotenv/config server/server.js",
+    "start:server": "DOTENV_CONFIG_PATH=server/.env node -r ./server/node_modules/dotenv/config server/server.js"
+  }
+}
