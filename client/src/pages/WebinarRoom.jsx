@@ -133,7 +133,10 @@ const WebinarRoom = () => {
     const initMedia = async () => {
       if (!canSpeak) return; // Attendees get no media
       try {
+        // Always request BOTH audio and video, then control via track.enabled
         const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+        stream.getAudioTracks().forEach(t => { t.enabled = micOn; });
+        stream.getVideoTracks().forEach(t => { t.enabled = camOn; });
         userStreamRef.current = stream;
         if (localVideoRef.current) localVideoRef.current.srcObject = stream;
       } catch (err) {
@@ -161,7 +164,19 @@ const WebinarRoom = () => {
       setParticipants(prev => prev.filter(p => p.id !== userId));
     });
 
+    // Cleanup on tab close
+    const handleBeforeUnload = () => {
+      if (userStreamRef.current) {
+        userStreamRef.current.getTracks().forEach(t => t.stop());
+        userStreamRef.current = null;
+      }
+      if (localVideoRef.current) localVideoRef.current.srcObject = null;
+      socketRef.current?.disconnect();
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+
     return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
       socketRef.current?.disconnect();
       if (userStreamRef.current) {
         userStreamRef.current.getTracks().forEach(t => t.stop());

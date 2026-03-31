@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import io from 'socket.io-client';
 
 const SERVER_URL = import.meta.env.VITE_SERVER_URL || 'http://localhost:5001';
@@ -6,6 +6,7 @@ const SERVER_URL = import.meta.env.VITE_SERVER_URL || 'http://localhost:5001';
 export const useWebRTC = (roomId, userState) => {
   const [peers, setPeers] = useState({});
   const [messages, setMessages] = useState([]);
+  const [participants, setParticipants] = useState([]);
   const socketRef = useRef();
   const userStreamRef = useRef();
   const peersRef = useRef({});
@@ -14,49 +15,67 @@ export const useWebRTC = (roomId, userState) => {
     if (!roomId || !userState) return;
 
     socketRef.current = io(SERVER_URL);
-    
-    // Get Local Media
+
+    // Always request both audio and video, then mute/disable tracks as needed
     navigator.mediaDevices.getUserMedia({
-      video: userState.camOn,
-      audio: userState.micOn
+      video: true,
+      audio: true
     }).then(stream => {
+      // Mute/disable tracks based on lobby preferences
+      stream.getAudioTracks().forEach(t => { t.enabled = userState.micOn; });
+      stream.getVideoTracks().forEach(t => { t.enabled = userState.camOn; });
+
       userStreamRef.current = stream;
-      
-      const myId = socketRef.current.id; // Usually available after connection, but better to use socket.id inside the connect event
-      
+
       socketRef.current.on('connect', () => {
         socketRef.current.emit('join-room', roomId, socketRef.current.id, userState.name);
+        // Add self to participants
+        setParticipants([{ id: socketRef.current.id, name: userState.name, isLocal: true }]);
       });
 
       socketRef.current.on('user-connected', (userId, name) => {
+        // Add to participants list
+        setParticipants(prev => {
+          if (prev.find(p => p.id === userId)) return prev;
+          return [...prev, { id: userId, name, isLocal: false }];
+        });
+
         const peer = createPeer(userId, socketRef.current.id, stream);
-        peersRef.current[userId] = peer;
-        setPeers(prev => ({ ...prev, [userId]: { peer, name } }));
+        peersRef.current[userId] = { peerConnection: peer, name };
+        // peers state is updated when ontrack fires
       });
 
       socketRef.current.on('offer', async (offer, senderId, name) => {
+        // Add to participants list
+        setParticipants(prev => {
+          if (prev.find(p => p.id === senderId)) return prev;
+          return [...prev, { id: senderId, name, isLocal: false }];
+        });
+
         const peer = createPeer(senderId, socketRef.current.id, stream, true, offer);
-        peersRef.current[senderId] = peer;
-        setPeers(prev => ({ ...prev, [senderId]: { peer, name } }));
+        peersRef.current[senderId] = { peerConnection: peer, name };
       });
 
       socketRef.current.on('answer', (answer, senderId) => {
-        const peer = peersRef.current[senderId];
-        if (peer) {
-          peer.setRemoteDescription(new RTCSessionDescription(answer));
+        const peerObj = peersRef.current[senderId];
+        if (peerObj) {
+          peerObj.peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
         }
       });
 
       socketRef.current.on('ice-candidate', (candidate, senderId) => {
-        const peer = peersRef.current[senderId];
-        if (peer) {
-          peer.addIceCandidate(new RTCIceCandidate(candidate));
+        const peerObj = peersRef.current[senderId];
+        if (peerObj) {
+          peerObj.peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
         }
       });
 
       socketRef.current.on('user-disconnected', userId => {
+        // Remove from participants
+        setParticipants(prev => prev.filter(p => p.id !== userId));
+
         if (peersRef.current[userId]) {
-          peersRef.current[userId].close();
+          peersRef.current[userId].peerConnection.close();
           delete peersRef.current[userId];
           setPeers(prev => {
             const nextPeers = { ...prev };
@@ -78,10 +97,12 @@ export const useWebRTC = (roomId, userState) => {
       socketRef.current?.disconnect();
       if (userStreamRef.current) {
         userStreamRef.current.getTracks().forEach(track => track.stop());
+        userStreamRef.current = null;
       }
-      Object.values(peersRef.current).forEach(peer => peer.close());
+      Object.values(peersRef.current).forEach(peerObj => peerObj.peerConnection?.close());
+      peersRef.current = {};
     };
-  }, [roomId, userState]);
+  }, [roomId]);
 
   const createPeer = (userToSignal, callerId, stream, isIncoming = false, offer = null) => {
     const peer = new RTCPeerConnection({
@@ -96,6 +117,20 @@ export const useWebRTC = (roomId, userState) => {
     peer.onicecandidate = event => {
       if (event.candidate) {
         socketRef.current.emit('ice-candidate', event.candidate, userToSignal);
+      }
+    };
+
+    // Receive remote tracks
+    peer.ontrack = (event) => {
+      const remoteStream = event.streams[0];
+      if (remoteStream) {
+        setPeers(prev => ({
+          ...prev,
+          [userToSignal]: {
+            stream: remoteStream,
+            name: peersRef.current[userToSignal]?.name || 'Participant'
+          }
+        }));
       }
     };
 
@@ -117,11 +152,6 @@ export const useWebRTC = (roomId, userState) => {
       });
     }
 
-    // For receiving tracks (video/audio from remote peer)
-    peer.oninteract = (e) => {
-      console.log('Got remote track', e);
-    } // Usually handled by the component listening to the peer object
-
     return peer;
   };
 
@@ -139,5 +169,25 @@ export const useWebRTC = (roomId, userState) => {
     }
   };
 
-  return { peers, userStream: userStreamRef.current, messages, sendMessage, toggleMedia };
+  const cleanup = useCallback(() => {
+    if (userStreamRef.current) {
+      userStreamRef.current.getTracks().forEach(track => track.stop());
+      userStreamRef.current = null;
+    }
+    Object.values(peersRef.current).forEach(peerObj => peerObj.peerConnection?.close());
+    peersRef.current = {};
+    socketRef.current?.disconnect();
+  }, []);
+
+  return {
+    peers,
+    userStream: userStreamRef.current,
+    userStreamRef,
+    messages,
+    participants,
+    sendMessage,
+    toggleMedia,
+    cleanup,
+    socketRef
+  };
 };
