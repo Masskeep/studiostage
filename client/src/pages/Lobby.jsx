@@ -4,6 +4,8 @@ import { Mic, MicOff, Video, VideoOff, Settings } from 'lucide-react';
 import Navbar from '../components/Navbar';
 import { useAuth } from '../context/AuthContext';
 
+const SERVER_URL = import.meta.env.VITE_SERVER_URL || 'http://localhost:5001';
+
 const Lobby = () => {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -12,16 +14,30 @@ const Lobby = () => {
   const [name, setName] = useState(user?.name || '');
   const [micOn, setMicOn] = useState(true);
   const [camOn, setCamOn] = useState(true);
+  const [isValidating, setIsValidating] = useState(true);
+  const [meetingError, setMeetingError] = useState('');
   const videoRef = useRef(null);
   const streamRef = useRef(null);
 
   useEffect(() => {
-    const startPreview = async () => {
-      // Stop any existing tracks first
-      if (streamRef.current) {
-        streamRef.current.getTracks().forEach(t => t.stop());
-      }
+    let mounted = true;
+    const validateAndStart = async () => {
       try {
+        const res = await fetch(`${SERVER_URL}/api/meetings/${id}`);
+        if (!res.ok) {
+          if (mounted) {
+            setMeetingError('This meeting does not exist or has expired.');
+            setIsValidating(false);
+          }
+          return;
+        }
+
+        if (mounted) setIsValidating(false);
+
+        // Stop any existing tracks first
+        if (streamRef.current) {
+          streamRef.current.getTracks().forEach(t => t.stop());
+        }
         const stream = await navigator.mediaDevices.getUserMedia({
           video: camOn,
           audio: micOn
@@ -31,10 +47,15 @@ const Lobby = () => {
           videoRef.current.srcObject = stream;
         }
       } catch (err) {
-        console.error('Error accessing media devices:', err);
+        if (mounted) {
+          setMeetingError('Error connecting to server.');
+          setIsValidating(false);
+        }
+        console.error('Validation or media error:', err);
       }
     };
-    startPreview();
+
+    validateAndStart();
 
     return () => {
       if (streamRef.current) {
@@ -61,6 +82,37 @@ const Lobby = () => {
 
     navigate(`/room/${id}`, { state: { name: name.trim(), micOn, camOn } });
   };
+
+  if (isValidating) {
+    return (
+      <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', backgroundColor: 'var(--bg-color)' }}>
+        <Navbar />
+        <main style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <p style={{ color: 'var(--text-secondary)', fontWeight: 600 }}>Validating meeting link...</p>
+        </main>
+      </div>
+    );
+  }
+
+  if (meetingError) {
+    return (
+      <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', backgroundColor: 'var(--bg-color)' }}>
+        <Navbar />
+        <main className="container" style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <div style={{ backgroundColor: 'var(--card-bg)', padding: '3rem', borderRadius: '20px', border: '1px solid var(--border-color)', textAlign: 'center', maxWidth: '400px' }}>
+            <div style={{ width: 64, height: 64, backgroundColor: 'rgba(211,47,47,0.1)', color: '#D32F2F', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 1.5rem' }}>
+              <Settings size={32} /> {/* Using settings as generic icon here, could be X icon */}
+            </div>
+            <h2 style={{ fontSize: '1.5rem', marginBottom: '1rem' }}>Meeting Not Found</h2>
+            <p style={{ color: 'var(--text-secondary)', marginBottom: '2rem' }}>{meetingError}</p>
+            <button className="btn-primary" onClick={() => navigate('/dashboard')} style={{ width: '100%' }}>
+              Return to Dashboard
+            </button>
+          </div>
+        </main>
+      </div>
+    );
+  }
 
   return (
     <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>

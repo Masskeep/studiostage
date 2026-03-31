@@ -99,8 +99,8 @@ const MeetingRoom = () => {
       }
     };
 
-    // Store early so name is available
-    peersRef.current[targetId] = { peerConnection: peer, name: peerName };
+    // Store early so name and queue are available
+    peersRef.current[targetId] = { peerConnection: peer, name: peerName, iceQueue: [] };
 
     if (!isIncoming) {
       peer.onnegotiationneeded = async () => {
@@ -117,6 +117,15 @@ const MeetingRoom = () => {
         const answer = await peer.createAnswer();
         await peer.setLocalDescription(answer);
         socketRef.current.emit('answer', answer, targetId);
+
+        // Process queued ICE candidates now that remote description is set
+        const peerObj = peersRef.current[targetId];
+        if (peerObj && peerObj.iceQueue) {
+          for (const c of peerObj.iceQueue) {
+            await peer.addIceCandidate(new RTCIceCandidate(c)).catch(e => console.warn('ICE warn:', e));
+          }
+          peerObj.iceQueue = [];
+        }
       }).catch(err => console.error('Answer error:', err));
     }
 
@@ -191,18 +200,35 @@ const MeetingRoom = () => {
           createPeer(senderId, stream, true, offer, name);
         });
 
-        socketRef.current.on('answer', (answer, senderId) => {
+        socketRef.current.on('answer', async (answer, senderId) => {
           console.log(`Received answer from: ${senderId}`);
           const peerObj = peersRef.current[senderId];
           if (peerObj?.peerConnection) {
-            peerObj.peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
+            try {
+              await peerObj.peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
+              
+              // Process queued ICE candidates
+              if (peerObj.iceQueue) {
+                for (const c of peerObj.iceQueue) {
+                  await peerObj.peerConnection.addIceCandidate(new RTCIceCandidate(c)).catch(e => console.warn('ICE warn:', e));
+                }
+                peerObj.iceQueue = [];
+              }
+            } catch (err) {
+              console.error('Error setting remote answer:', err);
+            }
           }
         });
 
         socketRef.current.on('ice-candidate', (candidate, senderId) => {
           const peerObj = peersRef.current[senderId];
           if (peerObj?.peerConnection) {
-            peerObj.peerConnection.addIceCandidate(new RTCIceCandidate(candidate)).catch(e => console.warn('ICE error:', e));
+            if (peerObj.peerConnection.remoteDescription) {
+              peerObj.peerConnection.addIceCandidate(new RTCIceCandidate(candidate)).catch(e => console.warn('ICE error:', e));
+            } else {
+              // Queue candidate if remote description isn't set yet
+              peerObj.iceQueue.push(candidate);
+            }
           }
         });
 

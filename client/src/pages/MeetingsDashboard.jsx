@@ -16,9 +16,42 @@ const MeetingsDashboard = () => {
   const [loading, setLoading] = useState(false);
   const [joinId, setJoinId] = useState('');
 
-  const startInstantMeeting = () => {
-    const meetingId = Math.random().toString(36).substring(2, 9);
-    navigate(`/room/${meetingId}/lobby`);
+  const startInstantMeeting = async () => {
+    setLoading(true);
+    try {
+      const res = await fetch(`${SERVER_URL}/api/meetings/create`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      const data = await res.json();
+      if (data.meetingId) {
+        navigate(`/room/${data.meetingId}/lobby`);
+      }
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const [joinError, setJoinError] = useState('');
+
+  const handleJoinById = async () => {
+    if (!joinId.trim()) return;
+    setLoading(true);
+    setJoinError('');
+    try {
+      const res = await fetch(`${SERVER_URL}/api/meetings/${joinId.trim()}`);
+      if (!res.ok) {
+        setJoinError('Meeting does not exist');
+      } else {
+        navigate(`/room/${joinId.trim()}/lobby`);
+      }
+    } catch (err) {
+      setJoinError('Error validating meeting');
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleSchedule = async (e) => {
@@ -109,13 +142,13 @@ const MeetingsDashboard = () => {
                 type="text"
                 placeholder="Enter Meeting ID"
                 value={joinId}
-                onChange={e => setJoinId(e.target.value)}
-                onKeyDown={e => { if (e.key === 'Enter' && joinId.trim()) navigate(`/room/${joinId.trim()}/lobby`); }}
+                onChange={e => { setJoinId(e.target.value); setJoinError(''); }}
+                onKeyDown={e => { if (e.key === 'Enter' && joinId.trim()) handleJoinById(); }}
                 style={{
                   flex: 1,
                   padding: '0.8rem 1rem',
                   borderRadius: '10px',
-                  border: '1px solid var(--border-color)',
+                  border: `1px solid ${joinError ? 'var(--error-color)' : 'var(--border-color)'}`,
                   backgroundColor: 'var(--bg-color)',
                   fontSize: '0.95rem',
                   fontFamily: 'inherit',
@@ -124,13 +157,14 @@ const MeetingsDashboard = () => {
               />
               <button
                 className="btn-primary"
-                onClick={() => { if (joinId.trim()) navigate(`/room/${joinId.trim()}/lobby`); }}
-                disabled={!joinId.trim()}
+                onClick={handleJoinById}
+                disabled={!joinId.trim() || loading}
                 style={{ padding: '0.8rem 1.5rem', fontSize: '0.95rem', opacity: joinId.trim() ? 1 : 0.5 }}
               >
-                Join
+                {loading ? '...' : 'Join'}
               </button>
             </div>
+            {joinError && <div style={{ color: 'var(--error-color)', fontSize: '0.8rem', marginTop: '0.5rem', fontWeight: 600 }}>{joinError}</div>}
           </div>
 
           <button
