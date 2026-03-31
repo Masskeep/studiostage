@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { useNavigate, Navigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 
-const SERVER_URL = 'http://localhost:5001';
+const SERVER_URL = import.meta.env.VITE_SERVER_URL || 'http://localhost:5001';
 
 const AuthPage = () => {
   const { user, login } = useAuth();

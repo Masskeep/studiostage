@@ -8,7 +8,7 @@ import {
 } from 'lucide-react';
 import io from 'socket.io-client';
 
-const SERVER_URL = 'http://localhost:5001';
+const SERVER_URL = import.meta.env.VITE_SERVER_URL || 'http://localhost:5001';
 
 /* ─── Role badge ─── */
 const RoleBadge = ({ role }) => {

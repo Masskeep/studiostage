@@ -4,7 +4,7 @@ import { useAuth } from '../context/AuthContext';
 import { Radio, Calendar, Clock, Users, Link, Plus, Globe, X, ArrowRight } from 'lucide-react';
 import Navbar from '../components/Navbar';
 
-const SERVER_URL = 'http://localhost:5001';
+const SERVER_URL = import.meta.env.VITE_SERVER_URL || 'http://localhost:5001';
 
 const labelStyle = {
   display: 'block', fontSize: '0.75rem', fontWeight: 700,

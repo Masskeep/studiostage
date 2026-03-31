@@ -5,7 +5,7 @@ import VideoParticipant from '../components/VideoParticipant';
 import { useAuth } from '../context/AuthContext';
 import io from 'socket.io-client';
 
-const SERVER_URL = 'http://localhost:5001';
+const SERVER_URL = import.meta.env.VITE_SERVER_URL || 'http://localhost:5001';
 
 const MeetingRoom = () => {
   const { id } = useParams();

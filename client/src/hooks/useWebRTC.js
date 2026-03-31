@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import io from 'socket.io-client';
 
-const SERVER_URL = 'http://localhost:5001';
+const SERVER_URL = import.meta.env.VITE_SERVER_URL || 'http://localhost:5001';
 
 export const useWebRTC = (roomId, userState) => {
   const [peers, setPeers] = useState({});

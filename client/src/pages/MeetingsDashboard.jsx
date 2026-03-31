@@ -4,7 +4,7 @@ import { useAuth } from '../context/AuthContext';
 import { Video, Calendar, Clock, Link, Plus, ChevronRight } from 'lucide-react';
 import Navbar from '../components/Navbar';
 
-const SERVER_URL = 'http://localhost:5001';
+const SERVER_URL = import.meta.env.VITE_SERVER_URL || 'http://localhost:5001';
 
 const MeetingsDashboard = () => {
   const navigate = useNavigate();
