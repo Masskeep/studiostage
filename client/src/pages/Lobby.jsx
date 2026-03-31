@@ -63,7 +63,7 @@ const Lobby = () => {
         console.error('Media error:', mediaErr);
         if (mounted) {
           // Instead of a blocking alert, show a retry button in the UI
-          setCameraBlocked(true);
+          setCameraBlocked({ name: mediaErr.name, message: mediaErr.message });
           setCamOn(false);
           setMicOn(false);
         }
@@ -122,7 +122,7 @@ const Lobby = () => {
       setCamOn(true);
       setMicOn(true);
     } catch (err) {
-      alert("Still unable to access camera. Please check your browser permissions settings or ensure you are deploying on a secure HTTPS connection.");
+      alert(`Camera blocked by Chrome (${err.name}: ${err.message}). Are you on HTTP or HTTPS? Have you checked Chrome app permissions?`);
     }
   };
 
@@ -193,10 +193,13 @@ const Lobby = () => {
                 display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', zIndex: 10
               }}>
                 <p style={{ color: 'white', marginBottom: '1rem', textAlign: 'center', padding: '0 1rem', fontSize: '0.9rem' }}>
-                  Your phone blocked automatic camera access. 
+                  Your phone blocked camera access.<br/>
+                  <span style={{ color: '#F44336', fontSize: '0.8rem', marginTop: '0.5rem', display: 'block' }}>
+                    Error: {cameraBlocked.name}
+                  </span>
                 </p>
                 <button onClick={requestMediaAccess} className="btn-primary" style={{ padding: '0.6rem 1.2rem', fontSize: '0.85rem' }}>
-                  Tap to Enable Permissions
+                  Retry Permissions
                 </button>
               </div>
             )}
