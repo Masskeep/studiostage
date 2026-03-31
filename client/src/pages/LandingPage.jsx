@@ -20,7 +20,7 @@ const LandingPage = () => {
     <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
       <Navbar />
 
-      <main className="container" style={{ flex: 1, display: 'flex', alignItems: 'center', marginTop: '4rem' }}>
+      <main className="container landing-hero" style={{ flex: 1, display: 'flex', alignItems: 'center', marginTop: '4rem' }}>
         <div style={{ flex: 1, paddingRight: '3rem' }} className="animate-fade-in">
           <span style={{
             backgroundColor: 'var(--card-purple-light)',

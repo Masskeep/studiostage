@@ -17,31 +17,20 @@ const MeetingRoom = () => {
   const { user } = useAuth();
   const userState = location.state || { name: user?.name || 'Guest', micOn: true, camOn: true };
 
-  /* ── Chat State ── */
   const [messages, setMessages] = useState([]);
   const [chatInput, setChatInput] = useState('');
-
-  /* ── Media State ── */
   const [micOn, setMicOn] = useState(userState.micOn);
   const [camOn, setCamOn] = useState(userState.camOn);
   const [isRecording, setIsRecording] = useState(false);
   const [isScreenSharing, setIsScreenSharing] = useState(false);
   const [linkCopied, setLinkCopied] = useState(false);
-
-  /* ── Panel State ── */
   const [sidePanel, setSidePanel] = useState('chat');
-  const [panelOpen, setPanelOpen] = useState(true);
-
-  /* ── Participants & Peers ── */
-  const [participants, setParticipants] = useState([
-    { id: 'me', name: userState.name, isLocal: true }
-  ]);
+  const [panelOpen, setPanelOpen] = useState(false); // closed by default on mobile
+  const [participants, setParticipants] = useState([{ id: 'me', name: userState.name, isLocal: true }]);
   const [remotePeers, setRemotePeers] = useState({});
-
-  /* ── Gallery/Pin State ── */
   const [pinnedUser, setPinnedUser] = useState(null);
+  const [connectionStatus, setConnectionStatus] = useState('connecting');
 
-  /* ── Refs ── */
   const socketRef = useRef();
   const userStreamRef = useRef();
   const localVideoRef = useRef();
@@ -49,17 +38,13 @@ const MeetingRoom = () => {
   const recordedChunksRef = useRef([]);
   const recordingStartRef = useRef(null);
   const peersRef = useRef({});
-  const streamReadyRef = useRef(false);
 
-  /* ── Cleanup function ── */
   const cleanupMedia = useCallback(() => {
     if (userStreamRef.current) {
       userStreamRef.current.getTracks().forEach(track => track.stop());
       userStreamRef.current = null;
     }
-    if (localVideoRef.current) {
-      localVideoRef.current.srcObject = null;
-    }
+    if (localVideoRef.current) localVideoRef.current.srcObject = null;
     Object.values(peersRef.current).forEach(peerObj => {
       if (peerObj.peerConnection) peerObj.peerConnection.close();
     });
@@ -70,107 +55,176 @@ const MeetingRoom = () => {
     }
   }, []);
 
-  /* ── WebRTC Peer Creation ── */
-  const createPeer = useCallback((userToSignal, stream, isIncoming = false, offer = null) => {
+  const createPeer = useCallback((targetId, stream, isIncoming = false, offer = null, peerName = 'Participant') => {
+    // Don't create duplicate peer connections
+    if (peersRef.current[targetId]?.peerConnection) {
+      console.log(`Peer connection to ${targetId} already exists, skipping`);
+      return peersRef.current[targetId].peerConnection;
+    }
+
+    console.log(`Creating peer connection to ${targetId} (incoming: ${isIncoming})`);
+
     const peer = new RTCPeerConnection({
       iceServers: [
         { urls: 'stun:stun.l.google.com:19302' },
         { urls: 'stun:stun1.l.google.com:19302' },
+        { urls: 'stun:stun2.l.google.com:19302' },
         { urls: 'stun:global.stun.twilio.com:3478' }
       ]
     });
 
-    // Add ALL local tracks to peer connection
     stream.getTracks().forEach(track => peer.addTrack(track, stream));
 
     peer.onicecandidate = event => {
       if (event.candidate && socketRef.current) {
-        socketRef.current.emit('ice-candidate', event.candidate, userToSignal);
+        socketRef.current.emit('ice-candidate', event.candidate, targetId);
       }
     };
 
-    // Receive remote video/audio tracks
     peer.ontrack = (event) => {
+      console.log(`Received remote track from ${targetId}`);
       const remoteStream = event.streams[0];
       if (remoteStream) {
         setRemotePeers(prev => ({
           ...prev,
-          [userToSignal]: {
-            stream: remoteStream,
-            name: peersRef.current[userToSignal]?.name || 'Participant'
-          }
+          [targetId]: { stream: remoteStream, name: peerName }
         }));
       }
     };
 
     peer.oniceconnectionstatechange = () => {
-      console.log(`Peer ${userToSignal} ICE state: ${peer.iceConnectionState}`);
+      console.log(`Peer ${targetId} ICE: ${peer.iceConnectionState}`);
+      if (peer.iceConnectionState === 'failed' || peer.iceConnectionState === 'disconnected') {
+        console.log(`Peer ${targetId} connection failed/disconnected`);
+      }
     };
 
+    // Store early so name is available
+    peersRef.current[targetId] = { peerConnection: peer, name: peerName };
+
     if (!isIncoming) {
-      // We are the caller — create and send offer
       peer.onnegotiationneeded = async () => {
         try {
           const sdpOffer = await peer.createOffer();
           await peer.setLocalDescription(sdpOffer);
-          socketRef.current.emit('offer', peer.localDescription, userToSignal);
+          socketRef.current.emit('offer', peer.localDescription, targetId);
         } catch (err) {
           console.error('Offer error:', err);
         }
       };
-    } else {
-      // We received an offer — set it and create answer
+    } else if (offer) {
       peer.setRemoteDescription(new RTCSessionDescription(offer)).then(async () => {
         const answer = await peer.createAnswer();
         await peer.setLocalDescription(answer);
-        socketRef.current.emit('answer', answer, userToSignal);
+        socketRef.current.emit('answer', answer, targetId);
       }).catch(err => console.error('Answer error:', err));
     }
 
     return peer;
   }, []);
 
-  /* ── Initialize Socket + Media ── */
   useEffect(() => {
     let mounted = true;
-    socketRef.current = io(SERVER_URL);
+    socketRef.current = io(SERVER_URL, {
+      transports: ['websocket', 'polling'],
+      reconnectionAttempts: 5,
+    });
 
-    // STEP 1: Get media FIRST, then join room
-    // This prevents the race condition where socket events fire before stream is ready
     const init = async () => {
       try {
-        // Always request BOTH audio and video
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: true,
-          audio: true
-        });
+        const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+        if (!mounted) { stream.getTracks().forEach(t => t.stop()); return; }
 
-        if (!mounted) {
-          stream.getTracks().forEach(t => t.stop());
-          return;
-        }
-
-        // Apply lobby preferences via track.enabled (not removing the track)
         stream.getAudioTracks().forEach(t => { t.enabled = userState.micOn; });
         stream.getVideoTracks().forEach(t => { t.enabled = userState.camOn; });
 
         userStreamRef.current = stream;
-        streamReadyRef.current = true;
+        if (localVideoRef.current) localVideoRef.current.srcObject = stream;
 
-        if (localVideoRef.current) {
-          localVideoRef.current.srcObject = stream;
-        }
-
-        // STEP 2: NOW set up socket listeners (stream is guaranteed ready)
-        setupSocketListeners(stream);
-
-        // STEP 3: Join room (after listeners are set up)
-        if (socketRef.current.connected) {
+        // Set up ALL socket listeners
+        socketRef.current.on('connect', () => {
+          console.log('Socket connected:', socketRef.current.id);
+          setConnectionStatus('connected');
           socketRef.current.emit('join-room', id, socketRef.current.id, userState.name);
-        } else {
-          socketRef.current.on('connect', () => {
-            socketRef.current.emit('join-room', id, socketRef.current.id, userState.name);
+        });
+
+        socketRef.current.on('disconnect', () => {
+          console.log('Socket disconnected');
+          setConnectionStatus('disconnected');
+        });
+
+        // When we join, server sends us a list of everyone already in the room
+        socketRef.current.on('existing-users', (users) => {
+          console.log('Existing users in room:', users);
+          users.forEach(({ id: peerId, name }) => {
+            setParticipants(prev => {
+              if (prev.find(p => p.id === peerId)) return prev;
+              return [...prev, { id: peerId, name, isLocal: false }];
+            });
+            // Create peer connection and send offer to each existing user
+            createPeer(peerId, stream, false, null, name);
           });
+        });
+
+        // A NEW user joined AFTER us
+        socketRef.current.on('user-connected', (userId, name) => {
+          console.log(`New user connected: ${userId} (${name})`);
+          setParticipants(prev => {
+            if (prev.find(p => p.id === userId)) return prev;
+            return [...prev, { id: userId, name, isLocal: false }];
+          });
+          // Don't create peer here — they will send us an offer via existing-users
+        });
+
+        // Received an offer from another peer
+        socketRef.current.on('offer', (offer, senderId, name) => {
+          console.log(`Received offer from: ${senderId} (${name})`);
+          setParticipants(prev => {
+            if (prev.find(p => p.id === senderId)) return prev;
+            return [...prev, { id: senderId, name, isLocal: false }];
+          });
+          // If we already have a peer connection, close it first
+          if (peersRef.current[senderId]?.peerConnection) {
+            peersRef.current[senderId].peerConnection.close();
+            delete peersRef.current[senderId];
+          }
+          createPeer(senderId, stream, true, offer, name);
+        });
+
+        socketRef.current.on('answer', (answer, senderId) => {
+          console.log(`Received answer from: ${senderId}`);
+          const peerObj = peersRef.current[senderId];
+          if (peerObj?.peerConnection) {
+            peerObj.peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
+          }
+        });
+
+        socketRef.current.on('ice-candidate', (candidate, senderId) => {
+          const peerObj = peersRef.current[senderId];
+          if (peerObj?.peerConnection) {
+            peerObj.peerConnection.addIceCandidate(new RTCIceCandidate(candidate)).catch(e => console.warn('ICE error:', e));
+          }
+        });
+
+        socketRef.current.on('user-disconnected', userId => {
+          console.log(`User disconnected: ${userId}`);
+          setParticipants(prev => prev.filter(p => p.id !== userId));
+          setPinnedUser(prev => prev === userId ? null : prev);
+          if (peersRef.current[userId]) {
+            peersRef.current[userId].peerConnection?.close();
+            delete peersRef.current[userId];
+            setRemotePeers(prev => { const next = { ...prev }; delete next[userId]; return next; });
+          }
+        });
+
+        socketRef.current.on('receive-message', (data) => {
+          setMessages(prev => [...prev, data]);
+        });
+
+        // If socket is already connected by the time we set up listeners
+        if (socketRef.current.connected) {
+          setConnectionStatus('connected');
+          socketRef.current.emit('join-room', id, socketRef.current.id, userState.name);
         }
 
       } catch (err) {
@@ -178,76 +232,8 @@ const MeetingRoom = () => {
       }
     };
 
-    const setupSocketListeners = (stream) => {
-      // New user joined the room — create peer connection to them
-      socketRef.current.on('user-connected', (userId, name) => {
-        console.log(`User connected: ${userId} (${name})`);
-        setParticipants(prev => {
-          if (prev.find(p => p.id === userId)) return prev;
-          return [...prev, { id: userId, name, isLocal: false }];
-        });
-
-        // Create peer and send offer
-        const peer = createPeer(userId, stream);
-        peersRef.current[userId] = { peerConnection: peer, name };
-      });
-
-      // Received an offer from another peer
-      socketRef.current.on('offer', (offer, senderId, name) => {
-        console.log(`Received offer from: ${senderId} (${name})`);
-        setParticipants(prev => {
-          if (prev.find(p => p.id === senderId)) return prev;
-          return [...prev, { id: senderId, name, isLocal: false }];
-        });
-
-        // Create peer and send answer
-        const peer = createPeer(senderId, stream, true, offer);
-        peersRef.current[senderId] = { peerConnection: peer, name };
-      });
-
-      // Received an answer to our offer
-      socketRef.current.on('answer', (answer, senderId) => {
-        console.log(`Received answer from: ${senderId}`);
-        const peerObj = peersRef.current[senderId];
-        if (peerObj?.peerConnection) {
-          peerObj.peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
-        }
-      });
-
-      // Received ICE candidate
-      socketRef.current.on('ice-candidate', (candidate, senderId) => {
-        const peerObj = peersRef.current[senderId];
-        if (peerObj?.peerConnection) {
-          peerObj.peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
-        }
-      });
-
-      // User disconnected
-      socketRef.current.on('user-disconnected', userId => {
-        console.log(`User disconnected: ${userId}`);
-        setParticipants(prev => prev.filter(p => p.id !== userId));
-        setPinnedUser(prev => prev === userId ? null : prev);
-
-        if (peersRef.current[userId]) {
-          peersRef.current[userId].peerConnection?.close();
-          delete peersRef.current[userId];
-          setRemotePeers(prev => {
-            const next = { ...prev };
-            delete next[userId];
-            return next;
-          });
-        }
-      });
-
-      // Chat messages
-      socketRef.current.on('receive-message', (data) => {
-        setMessages(prev => [...prev, data]);
-      });
-    };
-
     init();
 
-    // beforeunload: stop camera even if user closes the tab
     const handleBeforeUnload = () => cleanupMedia();
     window.addEventListener('beforeunload', handleBeforeUnload);
 
@@ -258,70 +244,58 @@ const MeetingRoom = () => {
     };
   }, [id, createPeer, cleanupMedia]);
 
-  /* ── Media Controls ── */
   const toggleMic = () => {
     if (userStreamRef.current) {
-      const audioTrack = userStreamRef.current.getAudioTracks()[0];
-      if (audioTrack) { audioTrack.enabled = !micOn; setMicOn(!micOn); }
+      const t = userStreamRef.current.getAudioTracks()[0];
+      if (t) { t.enabled = !micOn; setMicOn(!micOn); }
     }
   };
 
   const toggleCam = () => {
     if (userStreamRef.current) {
-      const videoTrack = userStreamRef.current.getVideoTracks()[0];
-      if (videoTrack) { videoTrack.enabled = !camOn; setCamOn(!camOn); }
+      const t = userStreamRef.current.getVideoTracks()[0];
+      if (t) { t.enabled = !camOn; setCamOn(!camOn); }
     }
   };
 
   const handleScreenShare = async () => {
     try {
       if (!isScreenSharing) {
-        const screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
-        userStreamRef.current = screenStream;
-        if (localVideoRef.current) localVideoRef.current.srcObject = screenStream;
+        const s = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+        userStreamRef.current = s;
+        if (localVideoRef.current) localVideoRef.current.srcObject = s;
         setIsScreenSharing(true);
-        screenStream.getVideoTracks()[0].onended = () => { handleScreenShare(); };
+        s.getVideoTracks()[0].onended = () => handleScreenShare();
       } else {
-        const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-        stream.getAudioTracks().forEach(t => { t.enabled = micOn; });
-        stream.getVideoTracks().forEach(t => { t.enabled = camOn; });
-        userStreamRef.current = stream;
-        if (localVideoRef.current) localVideoRef.current.srcObject = stream;
+        const s = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+        s.getAudioTracks().forEach(t => { t.enabled = micOn; });
+        s.getVideoTracks().forEach(t => { t.enabled = camOn; });
+        userStreamRef.current = s;
+        if (localVideoRef.current) localVideoRef.current.srcObject = s;
         setIsScreenSharing(false);
       }
-    } catch (e) {
-      console.error(e);
-    }
+    } catch (e) { console.error(e); }
   };
 
   const handleRecord = () => {
-    if (isRecording) {
-      mediaRecorderRef.current.stop();
-      setIsRecording(false);
-    } else {
+    if (isRecording) { mediaRecorderRef.current.stop(); setIsRecording(false); }
+    else {
       if (!userStreamRef.current) return;
       recordedChunksRef.current = [];
       recordingStartRef.current = Date.now();
-      let mimeType = 'video/webm';
-      if (MediaRecorder.isTypeSupported('video/webm; codecs=vp9')) {
-        mimeType = 'video/webm; codecs=vp9';
-      }
-      mediaRecorderRef.current = new MediaRecorder(userStreamRef.current, { mimeType });
-      mediaRecorderRef.current.ondataavailable = (event) => {
-        if (event.data.size > 0) recordedChunksRef.current.push(event.data);
-      };
+      let mt = 'video/webm';
+      if (MediaRecorder.isTypeSupported('video/webm; codecs=vp9')) mt = 'video/webm; codecs=vp9';
+      mediaRecorderRef.current = new MediaRecorder(userStreamRef.current, { mimeType: mt });
+      mediaRecorderRef.current.ondataavailable = e => { if (e.data.size > 0) recordedChunksRef.current.push(e.data); };
       mediaRecorderRef.current.onstop = () => {
         const blob = new Blob(recordedChunksRef.current, { type: 'video/webm' });
-        const durationMs = Date.now() - (recordingStartRef.current || Date.now());
-        const filename = `StudioStage_${id}_${new Date().toISOString().replace(/:/g, '-')}.webm`;
-        const existing = JSON.parse(localStorage.getItem('ss_recordings') || '[]');
-        existing.unshift({
-          id: `rec_${Date.now()}`, meetingId: id, type: 'meeting', title: `Meeting — ${id}`,
-          recordedAt: new Date().toISOString(), durationMs, sizeBytes: blob.size, filename,
-        });
-        localStorage.setItem('ss_recordings', JSON.stringify(existing));
+        const dur = Date.now() - (recordingStartRef.current || Date.now());
+        const fn = `StudioStage_${id}_${new Date().toISOString().replace(/:/g, '-')}.webm`;
+        const ex = JSON.parse(localStorage.getItem('ss_recordings') || '[]');
+        ex.unshift({ id: `rec_${Date.now()}`, meetingId: id, type: 'meeting', title: `Meeting — ${id}`, recordedAt: new Date().toISOString(), durationMs: dur, sizeBytes: blob.size, filename: fn });
+        localStorage.setItem('ss_recordings', JSON.stringify(ex));
         const url = URL.createObjectURL(blob);
-        const a = Object.assign(document.createElement('a'), { href: url, download: filename, style: 'display:none' });
+        const a = Object.assign(document.createElement('a'), { href: url, download: fn, style: 'display:none' });
         document.body.appendChild(a); a.click(); window.URL.revokeObjectURL(url);
       };
       mediaRecorderRef.current.start();
@@ -330,244 +304,191 @@ const MeetingRoom = () => {
   };
 
   const shareMeetingLink = () => {
-    const link = `${window.location.origin}/room/${id}/lobby`;
-    navigator.clipboard.writeText(link);
-    setLinkCopied(true);
-    setTimeout(() => setLinkCopied(false), 2500);
+    navigator.clipboard.writeText(`${window.location.origin}/room/${id}/lobby`);
+    setLinkCopied(true); setTimeout(() => setLinkCopied(false), 2500);
   };
 
   const sendMessage = (e) => {
     e.preventDefault();
-    if (chatInput.trim() && socketRef.current) {
-      socketRef.current.emit('send-message', chatInput, userState.name);
-      setChatInput('');
-    }
+    if (chatInput.trim() && socketRef.current) { socketRef.current.emit('send-message', chatInput, userState.name); setChatInput(''); }
   };
 
-  const leaveMeeting = () => {
-    cleanupMedia();
-    navigate('/');
-  };
+  const leaveMeeting = () => { cleanupMedia(); navigate('/'); };
 
-  /* ── Gallery Grid Helper ── */
-  const getGridStyle = (totalCount) => {
-    if (totalCount <= 1) return { gridTemplateColumns: '1fr' };
-    if (totalCount === 2) return { gridTemplateColumns: '1fr 1fr' };
-    if (totalCount <= 4) return { gridTemplateColumns: '1fr 1fr' };
-    if (totalCount <= 6) return { gridTemplateColumns: '1fr 1fr 1fr' };
+  const getGridStyle = (n) => {
+    if (n <= 1) return { gridTemplateColumns: '1fr' };
+    if (n === 2) return { gridTemplateColumns: '1fr 1fr' };
+    if (n <= 4) return { gridTemplateColumns: '1fr 1fr' };
     return { gridTemplateColumns: '1fr 1fr 1fr' };
   };
 
-  /* ── Build list of all video tiles ── */
   const allTiles = [
     { id: 'me', name: userState.name, stream: userStreamRef.current, isLocal: true },
-    ...Object.entries(remotePeers).map(([peerId, { stream, name }]) => ({
-      id: peerId, name, stream, isLocal: false,
-    })),
+    ...Object.entries(remotePeers).map(([pid, { stream, name }]) => ({ id: pid, name, stream, isLocal: false })),
   ];
 
   const isPinMode = pinnedUser !== null;
   const pinnedTile = isPinMode ? allTiles.find(t => t.id === pinnedUser) : null;
   const unpinnedTiles = isPinMode ? allTiles.filter(t => t.id !== pinnedUser) : allTiles;
 
-  /* ── Control Button ── */
   const ctrlBtn = (active, onClick, ActiveIcon, InactiveIcon, label) => (
-    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px' }}>
-      <button
-        onClick={onClick}
-        title={label}
-        style={{
-          backgroundColor: active ? 'white' : 'rgba(255,255,255,0.12)',
-          color: active ? 'var(--primary-purple)' : 'white',
-          borderRadius: '50%', width: 50, height: 50,
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          flexShrink: 0, transition: 'all 0.15s'
-        }}
-      >
-        {active ? <ActiveIcon size={22} /> : (InactiveIcon ? <InactiveIcon size={22} /> : <ActiveIcon size={22} />)}
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '3px' }}>
+      <button onClick={onClick} title={label} style={{
+        backgroundColor: active ? 'white' : 'rgba(255,255,255,0.12)',
+        color: active ? 'var(--primary-purple)' : 'white',
+        borderRadius: '50%', width: 44, height: 44,
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        flexShrink: 0, transition: 'all 0.15s'
+      }}>
+        {active ? <ActiveIcon size={20} /> : (InactiveIcon ? <InactiveIcon size={20} /> : <ActiveIcon size={20} />)}
       </button>
-      {label && <span style={{ fontSize: '0.65rem', color: 'rgba(255,255,255,0.7)', fontWeight: 500 }}>{label}</span>}
+      <span className="ctrl-label" style={{ fontSize: '0.6rem', color: 'rgba(255,255,255,0.65)', fontWeight: 500 }}>{label}</span>
     </div>
   );
 
-  /* ── Toggle Side Panel ── */
   const togglePanel = (panel) => {
-    if (sidePanel === panel && panelOpen) {
-      setPanelOpen(false);
-    } else {
-      setSidePanel(panel);
-      setPanelOpen(true);
-    }
+    if (sidePanel === panel && panelOpen) setPanelOpen(false);
+    else { setSidePanel(panel); setPanelOpen(true); }
   };
 
   return (
     <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', backgroundColor: '#0E0E14' }}>
       {/* Header */}
-      <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.75rem 2rem', borderBottom: '1px solid rgba(255,255,255,0.08)', backgroundColor: '#18181f' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '1.5rem' }}>
-          <div style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: '1.2rem', color: 'white', cursor: 'pointer' }} onClick={leaveMeeting}>StudioStage</div>
-          <div style={{ height: '20px', width: '1px', backgroundColor: 'rgba(255,255,255,0.15)' }} />
-          <span style={{ fontSize: '0.95rem', fontWeight: 600, color: 'rgba(255,255,255,0.7)' }}>Room: {id}</span>
+      <header className="meeting-header">
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', minWidth: 0 }}>
+          <div className="meeting-logo" onClick={leaveMeeting}>SS</div>
+          <span className="meeting-room-id">Room: {id}</span>
           {isRecording && (
-            <span style={{ backgroundColor: '#450a0a', color: '#f87171', padding: '0.2rem 0.65rem', borderRadius: '1rem', fontSize: '0.7rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '5px' }}>
-              <span style={{ width: 7, height: 7, borderRadius: '50%', backgroundColor: '#f87171', display: 'inline-block', animation: 'pulse 1.2s infinite' }} /> REC
+            <span style={{ backgroundColor: '#450a0a', color: '#f87171', padding: '0.15rem 0.5rem', borderRadius: '1rem', fontSize: '0.65rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0 }}>
+              <span style={{ width: 6, height: 6, borderRadius: '50%', backgroundColor: '#f87171', display: 'inline-block' }} /> REC
             </span>
           )}
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', backgroundColor: 'rgba(255,255,255,0.06)', padding: '0.35rem 0.8rem', borderRadius: '8px', color: 'rgba(255,255,255,0.7)', fontSize: '0.82rem' }}>
-            <Users size={15} /> {participants.length}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          {/* Connection indicator */}
+          <div style={{ width: 8, height: 8, borderRadius: '50%', backgroundColor: connectionStatus === 'connected' ? '#4ade80' : connectionStatus === 'connecting' ? '#fbbf24' : '#f87171', flexShrink: 0 }} title={connectionStatus} />
+          <div className="meeting-participants-badge">
+            <Users size={14} /> {participants.length}
           </div>
-          <button onClick={shareMeetingLink} style={{
-            display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.5rem 1rem',
+          <button onClick={shareMeetingLink} className="meeting-share-btn" style={{
             backgroundColor: linkCopied ? 'rgba(34,197,94,0.15)' : 'rgba(92,51,246,0.2)',
             color: linkCopied ? '#4ade80' : 'var(--primary-purple)',
-            borderRadius: '8px', fontWeight: 600, fontSize: '0.82rem',
-            border: `1px solid ${linkCopied ? 'rgba(34,197,94,0.3)' : 'rgba(92,51,246,0.3)'}`, transition: 'all 0.2s'
+            border: `1px solid ${linkCopied ? 'rgba(34,197,94,0.3)' : 'rgba(92,51,246,0.3)'}`,
           }}>
-            {linkCopied ? <Check size={16} /> : <Link size={16} />}
-            {linkCopied ? 'Copied!' : 'Share'}
+            {linkCopied ? <Check size={14} /> : <Link size={14} />}
+            <span className="share-text">{linkCopied ? 'Copied!' : 'Share'}</span>
           </button>
-          <div style={{ width: 34, height: 34, borderRadius: '50%', backgroundColor: 'var(--primary-purple)', color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: '0.85rem' }}>
-            {(userState.name || 'G').charAt(0).toUpperCase()}
-          </div>
         </div>
       </header>
 
       {/* Content */}
-      <main style={{ flex: 1, display: 'flex', overflow: 'hidden', padding: '0.75rem', gap: '0.75rem' }}>
-        {/* Video Area */}
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '0.75rem', minWidth: 0 }}>
-
-          {/* ── SPEAKER MODE (Pinned) ── */}
+      <main className="meeting-content">
+        <div className="meeting-video-area">
+          {/* SPEAKER MODE */}
           {isPinMode && pinnedTile ? (
-            <div style={{ flex: 1, display: 'flex', gap: '0.75rem', minHeight: 0 }}>
-              <div style={{ flex: 3, minHeight: 0 }}>
-                <VideoParticipant
-                  stream={pinnedTile.isLocal ? userStreamRef.current : pinnedTile.stream}
-                  isLocal={pinnedTile.isLocal}
-                  name={pinnedTile.name}
-                  isPinned={true}
-                  onPin={() => setPinnedUser(null)}
-                />
+            <div className="speaker-layout">
+              <div className="speaker-main">
+                <VideoParticipant stream={pinnedTile.isLocal ? userStreamRef.current : pinnedTile.stream} isLocal={pinnedTile.isLocal}
+                  name={pinnedTile.name} isPinned={true} onPin={() => setPinnedUser(null)} />
               </div>
               {unpinnedTiles.length > 0 && (
-                <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '0.5rem', overflowY: 'auto', minWidth: '160px', maxWidth: '240px' }}>
+                <div className="speaker-sidebar">
                   {unpinnedTiles.map(tile => (
-                    <div key={tile.id} style={{ height: '140px', flexShrink: 0 }}>
-                      <VideoParticipant
-                        stream={tile.isLocal ? userStreamRef.current : tile.stream}
-                        isLocal={tile.isLocal}
-                        name={tile.name}
-                        isPinned={false}
-                        onPin={() => setPinnedUser(tile.id)}
-                      />
+                    <div key={tile.id} className="speaker-sidebar-tile">
+                      <VideoParticipant stream={tile.isLocal ? userStreamRef.current : tile.stream} isLocal={tile.isLocal}
+                        name={tile.name} isPinned={false} onPin={() => setPinnedUser(tile.id)} />
                     </div>
                   ))}
                 </div>
               )}
             </div>
           ) : (
-            /* ── GALLERY MODE ── */
-            <div style={{ flex: 1, display: 'grid', ...getGridStyle(allTiles.length), gap: '0.5rem', minHeight: 0 }}>
+            /* GALLERY MODE */
+            <div className="gallery-grid" style={getGridStyle(allTiles.length)}>
               {allTiles.map(tile => (
-                <div key={tile.id} style={{ minHeight: 0, minWidth: 0 }}>
-                  <VideoParticipant
-                    stream={tile.isLocal ? userStreamRef.current : tile.stream}
-                    isLocal={tile.isLocal}
-                    name={tile.name}
-                    isPinned={false}
-                    onPin={() => setPinnedUser(tile.id)}
-                  />
+                <div key={tile.id} className="gallery-tile">
+                  <VideoParticipant stream={tile.isLocal ? userStreamRef.current : tile.stream} isLocal={tile.isLocal}
+                    name={tile.name} isPinned={false} onPin={() => setPinnedUser(tile.id)} />
                 </div>
               ))}
             </div>
           )}
 
           {/* Controls Bar */}
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.75rem', padding: '0.75rem 2rem', backgroundColor: '#5C33F6', borderRadius: '20px', flexWrap: 'wrap' }}>
+          <div className="meeting-controls">
             {ctrlBtn(micOn, toggleMic, Mic, MicOff, micOn ? 'Mute' : 'Unmute')}
-            {ctrlBtn(camOn, toggleCam, Video, VideoOff, camOn ? 'Stop Video' : 'Start Video')}
-            <div style={{ width: 1, height: 40, backgroundColor: 'rgba(255,255,255,0.2)', margin: '0 0.25rem' }} />
-            {ctrlBtn(!isScreenSharing, handleScreenShare, MonitorUp, MonitorUp, 'Share')}
-            {ctrlBtn(!isRecording, handleRecord, Circle, Circle, 'Record')}
-            <div style={{ width: 1, height: 40, backgroundColor: 'rgba(255,255,255,0.2)', margin: '0 0.25rem' }} />
-            {ctrlBtn(!isPinMode, () => setPinnedUser(isPinMode ? null : 'me'), LayoutGrid, Maximize2, isPinMode ? 'Gallery' : 'Speaker')}
+            {ctrlBtn(camOn, toggleCam, Video, VideoOff, camOn ? 'Camera' : 'Camera')}
+            <div className="ctrl-divider" />
+            <span className="hide-mobile">{ctrlBtn(!isScreenSharing, handleScreenShare, MonitorUp, MonitorUp, 'Share')}</span>
+            <span className="hide-mobile">{ctrlBtn(!isRecording, handleRecord, Circle, Circle, 'Record')}</span>
+            <span className="hide-mobile"><div className="ctrl-divider" /></span>
+            {ctrlBtn(!isPinMode, () => setPinnedUser(isPinMode ? null : 'me'), LayoutGrid, Maximize2, isPinMode ? 'Grid' : 'Pin')}
             {ctrlBtn(panelOpen && sidePanel === 'chat', () => togglePanel('chat'), MessageSquare, MessageSquare, 'Chat')}
             {ctrlBtn(panelOpen && sidePanel === 'participants', () => togglePanel('participants'), Users, Users, 'People')}
-            <div style={{ width: 1, height: 40, backgroundColor: 'rgba(255,255,255,0.2)', margin: '0 0.25rem' }} />
-            <button onClick={leaveMeeting} style={{ backgroundColor: '#D32F2F', color: 'white', padding: '0.65rem 1.75rem', borderRadius: '25px', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.95rem' }}>
-              <PhoneOff size={18} /> Leave
+            <div className="ctrl-divider" />
+            <button onClick={leaveMeeting} className="leave-btn">
+              <PhoneOff size={16} /> <span className="hide-mobile">Leave</span>
             </button>
           </div>
         </div>
 
-        {/* ── Side Panel ── */}
+        {/* Side Panel */}
         {panelOpen && (
-          <div style={{ width: '320px', backgroundColor: '#18181f', borderRadius: '16px', display: 'flex', flexDirection: 'column', overflow: 'hidden', border: '1px solid rgba(255,255,255,0.08)', flexShrink: 0 }}>
+          <div className="meeting-side-panel">
             <div style={{ display: 'flex', borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
               {[{ id: 'chat', label: 'CHAT' }, { id: 'participants', label: 'PEOPLE' }].map(tab => (
                 <button key={tab.id} onClick={() => setSidePanel(tab.id)} style={{
-                  flex: 1, textAlign: 'center', padding: '0.9rem', background: 'transparent',
+                  flex: 1, textAlign: 'center', padding: '0.8rem', background: 'transparent',
                   borderBottom: `2px solid ${sidePanel === tab.id ? 'var(--primary-purple)' : 'transparent'}`,
                   color: sidePanel === tab.id ? 'var(--primary-purple)' : 'rgba(255,255,255,0.5)',
-                  fontWeight: sidePanel === tab.id ? 700 : 500, fontSize: '0.78rem', letterSpacing: '0.05em', transition: 'all 0.15s',
+                  fontWeight: sidePanel === tab.id ? 700 : 500, fontSize: '0.75rem', letterSpacing: '0.05em', transition: 'all 0.15s',
                 }}>{tab.label}</button>
               ))}
             </div>
 
-            {/* ── Chat ── */}
             {sidePanel === 'chat' && (
               <>
-                <div style={{ flex: 1, overflowY: 'auto', padding: '1rem 1rem 0.5rem', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-                  {messages.length === 0 && (
-                    <div style={{ textAlign: 'center', color: 'rgba(255,255,255,0.4)', fontSize: '0.9rem', marginTop: '2rem' }}>No messages yet. Say hello!</div>
-                  )}
+                <div style={{ flex: 1, overflowY: 'auto', padding: '0.75rem', display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
+                  {messages.length === 0 && <div style={{ textAlign: 'center', color: 'rgba(255,255,255,0.4)', fontSize: '0.85rem', marginTop: '2rem' }}>No messages yet.</div>}
                   {messages.map((msg, i) => {
                     const isMine = msg.senderName === userState.name;
                     return (
                       <div key={i} style={{ alignSelf: isMine ? 'flex-end' : 'flex-start', maxWidth: '88%' }}>
-                        <div style={{ fontSize: '0.7rem', color: 'rgba(255,255,255,0.4)', marginBottom: '3px', textAlign: isMine ? 'right' : 'left' }}>
+                        <div style={{ fontSize: '0.65rem', color: 'rgba(255,255,255,0.4)', marginBottom: '2px', textAlign: isMine ? 'right' : 'left' }}>
                           {isMine ? 'You' : msg.senderName} · {msg.time}
                         </div>
                         <div style={{
                           backgroundColor: isMine ? 'var(--primary-purple)' : 'rgba(255,255,255,0.08)', color: 'white',
-                          padding: '0.7rem 0.9rem', borderRadius: '14px',
-                          borderBottomRightRadius: isMine ? 2 : 14, borderBottomLeftRadius: isMine ? 14 : 2,
-                          fontSize: '0.9rem', lineHeight: 1.45
+                          padding: '0.6rem 0.8rem', borderRadius: '12px',
+                          borderBottomRightRadius: isMine ? 2 : 12, borderBottomLeftRadius: isMine ? 12 : 2,
+                          fontSize: '0.85rem', lineHeight: 1.4
                         }}>{msg.message}</div>
                       </div>
                     );
                   })}
                 </div>
-                <form onSubmit={sendMessage} style={{ padding: '0.75rem', borderTop: '1px solid rgba(255,255,255,0.08)', display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-                  <input value={chatInput} onChange={e => setChatInput(e.target.value)} placeholder="Type a message..."
-                    style={{ flex: 1, padding: '0.7rem 0.9rem', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.12)', backgroundColor: 'rgba(255,255,255,0.05)', color: 'white', fontSize: '0.88rem', fontFamily: 'inherit' }}
+                <form onSubmit={sendMessage} style={{ padding: '0.6rem', borderTop: '1px solid rgba(255,255,255,0.08)', display: 'flex', gap: '0.4rem', alignItems: 'center' }}>
+                  <input value={chatInput} onChange={e => setChatInput(e.target.value)} placeholder="Message..."
+                    style={{ flex: 1, padding: '0.6rem 0.8rem', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.12)', backgroundColor: 'rgba(255,255,255,0.05)', color: 'white', fontSize: '0.85rem', fontFamily: 'inherit' }}
                   />
-                  <button type="submit" style={{ backgroundColor: 'var(--primary-purple)', color: 'white', borderRadius: '10px', width: 38, height: 38, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                    <Send size={16} />
+                  <button type="submit" style={{ backgroundColor: 'var(--primary-purple)', color: 'white', borderRadius: '8px', width: 34, height: 34, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                    <Send size={14} />
                   </button>
                 </form>
               </>
             )}
 
-            {/* ── Participants Panel ── */}
             {sidePanel === 'participants' && (
-              <div style={{ flex: 1, overflowY: 'auto', padding: '1rem' }}>
-                <p style={{ fontSize: '0.72rem', fontWeight: 700, color: 'rgba(255,255,255,0.4)', marginBottom: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+              <div style={{ flex: 1, overflowY: 'auto', padding: '0.75rem' }}>
+                <p style={{ fontSize: '0.7rem', fontWeight: 700, color: 'rgba(255,255,255,0.4)', marginBottom: '0.5rem', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
                   {participants.length} Participant{participants.length !== 1 ? 's' : ''}
                 </p>
                 {participants.map(p => (
-                  <div key={p.id} style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', padding: '0.6rem 0.5rem', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
-                    <div style={{ width: 34, height: 34, backgroundColor: 'var(--primary-purple)', color: 'white', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: '0.85rem', flexShrink: 0 }}>
+                  <div key={p.id} style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', padding: '0.5rem 0.4rem', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+                    <div style={{ width: 30, height: 30, backgroundColor: 'var(--primary-purple)', color: 'white', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: '0.8rem', flexShrink: 0 }}>
                       {p.name.charAt(0).toUpperCase()}
                     </div>
-                    <div style={{ flex: 1 }}>
-                      <p style={{ fontSize: '0.88rem', fontWeight: 600, color: 'white' }}>{p.name} {p.isLocal ? '(You)' : ''}</p>
-                    </div>
-                    {p.isLocal && (
-                      <span style={{ backgroundColor: 'rgba(92,51,246,0.2)', color: 'var(--primary-purple)', padding: '0.15rem 0.5rem', borderRadius: '1rem', fontSize: '0.65rem', fontWeight: 700 }}>HOST</span>
-                    )}
+                    <p style={{ flex: 1, fontSize: '0.85rem', fontWeight: 600, color: 'white' }}>{p.name} {p.isLocal ? '(You)' : ''}</p>
                   </div>
                 ))}
               </div>
