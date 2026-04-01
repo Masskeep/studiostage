@@ -44,11 +44,13 @@ const MeetingsDashboard = () => {
       const res = await fetch(`${SERVER_URL}/api/meetings/${joinId.trim()}`);
       if (!res.ok) {
         setJoinError('Meeting does not exist');
+        setTimeout(() => setJoinError(''), 750);
       } else {
         navigate(`/room/${joinId.trim()}/lobby`);
       }
     } catch (err) {
       setJoinError('Error validating meeting');
+      setTimeout(() => setJoinError(''), 750);
     } finally {
       setLoading(false);
     }

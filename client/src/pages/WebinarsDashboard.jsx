@@ -171,23 +171,33 @@ const WebinarsDashboard = () => {
   const [form, setForm] = useState({ title: '', description: '', startTime: '', duration: 60 });
   const [loading, setLoading] = useState(false);
   const [copied, setCopied] = useState('');
+  const [joinError, setJoinError] = useState('');
 
   const handleSchedule = async (e) => {
     e.preventDefault();
     setLoading(true);
     try {
+      const res = await fetch(`${SERVER_URL}/api/webinars/schedule`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify({ ...form, host: user?.id })
+      });
+      const data = await res.json();
+      
       const newWebinar = {
-        id: Math.random().toString(36).substring(2, 9),
-        title: form.title,
-        description: form.description,
-        startTime: form.startTime,
-        duration: form.duration,
+        id: data.webinarId,
+        title: data.title,
+        description: data.description,
+        startTime: data.startTime,
+        duration: data.duration,
         hostName: user?.name,
-        registered: 0,
+        registered: data.registered || 0,
       };
       setWebinars(prev => [newWebinar, ...prev]);
       setShowForm(false);
       setForm({ title: '', description: '', startTime: '', duration: 60 });
+    } catch (err) {
+      console.error(err);
     } finally {
       setLoading(false);
     }
@@ -199,13 +209,44 @@ const WebinarsDashboard = () => {
     setTimeout(() => setCopied(''), 2000);
   };
 
+  const startInstantWebinar = async () => {
+    setLoading(true);
+    try {
+      const res = await fetch(`${SERVER_URL}/api/webinars/create`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      const data = await res.json();
+      if (data.webinarId) {
+        navigate(`/webinar/${data.webinarId}`, { state: { role: 'host', name: user?.name } });
+      }
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
+  }
+
   const startWebinar = (id) => {
     navigate(`/webinar/${id}`, { state: { role: 'host', name: user?.name } });
   };
 
-  const joinAsAttendee = (id) => {
-    setShowJoinModal(false);
-    navigate(`/webinar/${id}`, { state: { role: 'attendee', name: user?.name } });
+  const joinAsAttendee = async (id) => {
+    setJoinError('');
+    try {
+      const res = await fetch(`${SERVER_URL}/api/webinars/${id}`);
+      if (!res.ok) {
+        setJoinError('This webinar does not exist or has already ended.');
+        setTimeout(() => setJoinError(''), 750);
+        return;
+      }
+      setShowJoinModal(false);
+      navigate(`/webinar/${id}`, { state: { role: 'attendee', name: user?.name } });
+    } catch (err) {
+      setJoinError('Error validating the webinar connection.');
+      setTimeout(() => setJoinError(''), 750);
+      console.error(err);
+    }
   };
 
   return (
@@ -218,6 +259,13 @@ const WebinarsDashboard = () => {
           onClose={() => setShowJoinModal(false)}
           onJoin={joinAsAttendee}
         />
+      )}
+      
+      {/* Absolute Error toast if modal closes or fails */}
+      {joinError && (
+        <div style={{ position: 'fixed', top: '100px', left: '50%', transform: 'translateX(-50%)', backgroundColor: 'var(--error-color)', color: 'white', padding: '1rem 2rem', borderRadius: '12px', zIndex: 9999, boxShadow: '0 8px 24px rgba(211,47,47,0.3)', fontWeight: 600 }}>
+          {joinError}
+        </div>
       )}
 
       <main className="container" style={{ paddingTop: '3rem' }}>
@@ -240,10 +288,7 @@ const WebinarsDashboard = () => {
               icon: <Radio size={28} />,
               title: 'Start Instant Webinar',
               sub: 'Go live right now as host.',
-              action: () => {
-                const id = Math.random().toString(36).substring(2, 9);
-                navigate(`/webinar/${id}`, { state: { role: 'host', name: user?.name } });
-              },
+              action: startInstantWebinar,
               purple: true,
             },
             {

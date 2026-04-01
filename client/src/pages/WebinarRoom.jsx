@@ -130,25 +130,42 @@ const WebinarRoom = () => {
   useEffect(() => {
     socketRef.current = io(SERVER_URL);
 
-    const initMedia = async () => {
-      if (!canSpeak) return; // Attendees get no media
+    const initConnection = async () => {
+      // 1. Validate Webinar exists
       try {
-        // Always request BOTH audio and video, then control via track.enabled
-        const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-        stream.getAudioTracks().forEach(t => { t.enabled = micOn; });
-        stream.getVideoTracks().forEach(t => { t.enabled = camOn; });
-        userStreamRef.current = stream;
-        if (localVideoRef.current) localVideoRef.current.srcObject = stream;
+        const res = await fetch(`${SERVER_URL}/api/webinars/${id}`);
+        if (!res.ok) {
+          console.error("Invalid Webinar ID");
+          window.alert("This webinar does not exist or has already ended.");
+          navigate('/webinars');
+          return;
+        }
       } catch (err) {
-        console.error('Media error:', err);
+        console.error("Validation failed", err);
+        navigate('/webinars');
+        return;
       }
+
+      // 2. Init Media if Host/Panelist
+      if (canSpeak) {
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+          stream.getAudioTracks().forEach(t => { t.enabled = micOn; });
+          stream.getVideoTracks().forEach(t => { t.enabled = camOn; });
+          userStreamRef.current = stream;
+          if (localVideoRef.current) localVideoRef.current.srcObject = stream;
+        } catch (err) {
+          console.error('Media error:', err);
+        }
+      }
+
+      // 3. Connect Socket
+      socketRef.current.on('connect', () => {
+        socketRef.current.emit('join-room', id, socketRef.current.id, displayName);
+      });
     };
 
-    initMedia();
-
-    socketRef.current.on('connect', () => {
-      socketRef.current.emit('join-room', id, socketRef.current.id, displayName);
-    });
+    initConnection();
 
     socketRef.current.on('receive-message', (data) => {
       setChatMessages(prev => [...prev, data]);
