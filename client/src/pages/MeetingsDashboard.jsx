@@ -169,23 +169,14 @@ const MeetingsDashboard = () => {
 
           <button
             onClick={() => setShowScheduleForm(true)}
-            style={{
-              backgroundColor: 'var(--card-bg)',
-              color: 'var(--text-primary)',
-              borderRadius: '20px',
-              padding: '2.5rem',
-              textAlign: 'left',
-              border: '1px solid var(--border-color)',
-              boxShadow: '0 4px 12px rgba(0,0,0,0.04)',
-              transition: 'transform 0.2s, box-shadow 0.2s',
-            }}
-            onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-4px)'; e.currentTarget.style.boxShadow = '0 12px 24px rgba(0,0,0,0.08)'; }}
-            onMouseLeave={e => { e.currentTarget.style.transform = 'translateY(0)'; e.currentTarget.style.boxShadow = '0 4px 12px rgba(0,0,0,0.04)'; }}
+            className="dashboard-card"
           >
-            <Calendar size={40} style={{ marginBottom: '1rem', color: 'var(--primary-purple)' }} />
-            <h2 style={{ fontSize: '1.5rem', marginBottom: '0.5rem', fontFamily: 'var(--font-display)' }}>Schedule a Meeting</h2>
-            <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>Pick a date and time. Share the link with participants.</p>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginTop: '1.5rem', color: 'var(--primary-purple)', fontWeight: 600 }}>
+            <div className="dashboard-card-icon">
+              <Calendar size={40} />
+            </div>
+            <h2 style={{ fontSize: '1.5rem', marginBottom: '0.5rem', fontFamily: 'var(--font-display)', color: 'inherit' }}>Schedule a Meeting</h2>
+            <p style={{ color: 'inherit', fontSize: '0.9rem', opacity: 0.8 }}>Pick a date and time. Share the link with participants.</p>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginTop: '1.5rem', fontWeight: 600, color: 'inherit', opacity: 0.9 }}>
               Schedule <ChevronRight size={18} />
             </div>
           </button>

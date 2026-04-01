@@ -264,22 +264,13 @@ const WebinarsDashboard = () => {
             <button
               key={i}
               onClick={card.action}
-              style={{
-                backgroundColor: card.purple ? 'var(--primary-purple)' : 'white',
-                color: card.purple ? 'white' : 'var(--text-primary)',
-                borderRadius: '20px', padding: '2rem', textAlign: 'left',
-                border: card.purple ? 'none' : '1px solid var(--border-color)',
-                boxShadow: card.purple ? '0 12px 32px rgba(92,51,246,0.28)' : '0 4px 12px rgba(0,0,0,0.04)',
-                transition: 'transform 0.2s, box-shadow 0.2s',
-              }}
-              onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-4px)'; }}
-              onMouseLeave={e => { e.currentTarget.style.transform = 'translateY(0)'; }}
+              className={`dashboard-card ${card.purple ? 'purple-default' : ''}`}
             >
-              <div style={{ marginBottom: '1rem', opacity: card.purple ? 0.9 : 1, color: card.purple ? 'white' : 'var(--primary-purple)' }}>
+              <div className="dashboard-card-icon">
                 {card.icon}
               </div>
-              <h3 style={{ fontSize: '1.1rem', marginBottom: '0.4rem' }}>{card.title}</h3>
-              <p style={{ fontSize: '0.85rem', opacity: 0.75 }}>{card.sub}</p>
+              <h3 style={{ fontSize: '1.1rem', marginBottom: '0.4rem', color: 'inherit' }}>{card.title}</h3>
+              <p style={{ fontSize: '0.85rem', opacity: 0.75, color: 'inherit' }}>{card.sub}</p>
             </button>
           ))}
         </div>
