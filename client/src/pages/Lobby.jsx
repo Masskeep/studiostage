@@ -132,6 +132,17 @@ const Lobby = () => {
     navigate(`/room/${id}`, { state: { name: name.trim(), micOn, camOn: false } });
   };
 
+  const handleLeave = () => {
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(track => track.stop());
+      streamRef.current = null;
+    }
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
+    navigate(user ? '/meetings' : '/');
+  };
+
   const requestMediaAccess = async () => {
     try {
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
@@ -374,6 +385,12 @@ const Lobby = () => {
 
           <div style={{ marginTop: '1.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--text-secondary)', fontSize: '0.8rem' }}>
             <span>🔒</span> END-TO-END ENCRYPTED
+          </div>
+
+          <div style={{ marginTop: '2rem', paddingTop: '1.5rem', borderTop: '1px solid rgba(255,255,255,0.06)', display: 'flex', justifyContent: 'flex-start' }}>
+            <button onClick={handleLeave} style={{ padding: '0.6rem 1.2rem', backgroundColor: 'rgba(211,47,47,0.1)', color: '#ef4444', border: '1px solid rgba(211,47,47,0.3)', borderRadius: '8px', cursor: 'pointer', fontWeight: 600, fontSize: '0.85rem', transition: 'all 0.2s' }}>
+              Cancel & Leave
+            </button>
           </div>
         </div>
       </main>
