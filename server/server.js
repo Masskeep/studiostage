@@ -29,7 +29,7 @@ app.get('/api/health', (req, res) => {
 });
 
 // ── Track rooms and users ──
-const rooms = {}; // { roomId: { socketId: { name } } }
+const rooms = {}; // { roomId: { participants: { socketId: { name } }, startTime: Date.now(), adminId: socketId } }
 
 // Socket.io for WebRTC signaling and Chat
 io.on('connection', (socket) => {
@@ -40,16 +40,23 @@ io.on('connection', (socket) => {
     socket.join(roomId);
     console.log(`User ${socket.id} (${name}) joined room ${roomId}`);
 
-    // Track user in room
-    if (!rooms[roomId]) rooms[roomId] = {};
-    rooms[roomId][socket.id] = { name };
+    if (!rooms[roomId]) {
+      rooms[roomId] = { participants: {}, startTime: Date.now(), adminId: socket.id };
+    }
+
+    rooms[roomId].participants[socket.id] = { name };
 
     // Tell the NEW user about ALL existing users in the room
-    const existingUsers = Object.entries(rooms[roomId])
+    const existingUsers = Object.entries(rooms[roomId].participants)
       .filter(([id]) => id !== socket.id)
       .map(([id, data]) => ({ id, name: data.name }));
     
-    socket.emit('existing-users', existingUsers);
+    // Also broadcast the current admin and the room start time
+    socket.emit('room-info', {
+      users: existingUsers,
+      startTime: rooms[roomId].startTime,
+      adminId: rooms[roomId].adminId
+    });
 
     // Notify EXISTING users about the new user
     socket.to(roomId).emit('user-connected', socket.id, name);
@@ -85,38 +92,60 @@ io.on('connection', (socket) => {
     socket.to(to).emit('ice-candidate', candidate, socket.id);
   });
 
-  // Explicit leave
-  socket.on('leave-room', () => {
+  // Admin logic: Kick
+  socket.on('kick-participant', (targetId) => {
+    if (socket.roomId && rooms[socket.roomId] && rooms[socket.roomId].adminId === socket.id) {
+      console.log(`Admin ${socket.id} kicked ${targetId}`);
+      io.to(targetId).emit('kicked-from-room');
+    }
+  });
+
+  // Admin logic: Transfer internally
+  socket.on('transfer-admin', (targetId) => {
+    if (socket.roomId && rooms[socket.roomId] && rooms[socket.roomId].adminId === socket.id) {
+      if (rooms[socket.roomId].participants[targetId]) {
+        rooms[socket.roomId].adminId = targetId;
+        io.to(socket.roomId).emit('admin-changed', targetId);
+        console.log(`Admin transferred manually to ${targetId}`);
+      }
+    }
+  });
+
+  const handleDisconnect = () => {
     if (socket.roomId) {
-      console.log(`User explicitly left: ${socket.id} from room ${socket.roomId}`);
+      console.log(`User left/disconnected: ${socket.id} from room ${socket.roomId}`);
       socket.to(socket.roomId).emit('user-disconnected', socket.id);
       
-      // Cleanup room tracking
-      if (rooms[socket.roomId]) {
-        delete rooms[socket.roomId][socket.id];
-        if (Object.keys(rooms[socket.roomId]).length === 0) {
+      const room = rooms[socket.roomId];
+      if (room) {
+        delete room.participants[socket.id];
+        
+        const remainingUsers = Object.keys(room.participants);
+        if (remainingUsers.length === 0) {
+          console.log(`Room ${socket.roomId} is empty, destroying metadata.`);
           delete rooms[socket.roomId];
+        } else {
+          // If the admin leaves, randomly pick a new admin
+          if (room.adminId === socket.id) {
+            const newAdmin = remainingUsers[Math.floor(Math.random() * remainingUsers.length)];
+            room.adminId = newAdmin;
+            console.log(`Admin dropped. Selected random new admin: ${newAdmin}`);
+            io.to(socket.roomId).emit('admin-changed', newAdmin);
+          }
         }
       }
       socket.leave(socket.roomId);
       socket.roomId = null;
     }
-  });
+  };
+
+  // Explicit leave
+  socket.on('leave-room', handleDisconnect);
 
   // Disconnect
   socket.on('disconnect', () => {
-    console.log(`User disconnected: ${socket.id}`);
-    if (socket.roomId) {
-      socket.to(socket.roomId).emit('user-disconnected', socket.id);
-      
-      // Cleanup room tracking
-      if (rooms[socket.roomId]) {
-        delete rooms[socket.roomId][socket.id];
-        if (Object.keys(rooms[socket.roomId]).length === 0) {
-          delete rooms[socket.roomId];
-        }
-      }
-    }
+    console.log(`Socket disconnected: ${socket.id}`);
+    handleDisconnect();
   });
 });
 

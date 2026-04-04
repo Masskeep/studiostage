@@ -30,6 +30,10 @@ const MeetingRoom = () => {
   const [remotePeers, setRemotePeers] = useState({});
   const [pinnedUser, setPinnedUser] = useState(null);
   const [connectionStatus, setConnectionStatus] = useState('connecting');
+  const [adminId, setAdminId] = useState(null);
+  const [meetingStartTime, setMeetingStartTime] = useState(null);
+  const [elapsedTime, setElapsedTime] = useState('00:00');
+  const [showHandoffModal, setShowHandoffModal] = useState(false);
 
   const socketRef = useRef();
   const userStreamRef = useRef();
@@ -54,6 +58,39 @@ const MeetingRoom = () => {
       socketRef.current.disconnect();
     }
   }, []);
+
+  const leaveMeeting = useCallback(() => {
+    const isAdmin = adminId === socketRef.current?.id;
+    const others = participants.filter(p => !p.isLocal);
+    
+    if (isAdmin && others.length > 0) {
+      setShowHandoffModal(true);
+    } else {
+      cleanupMedia();
+      navigate(user ? '/dashboard' : '/');
+    }
+  }, [navigate, cleanupMedia, user, adminId, participants]);
+
+  const confirmLeaveHandoff = (nextAdminId) => {
+    if (nextAdminId) {
+      socketRef.current.emit('transfer-admin', nextAdminId);
+    }
+    setShowHandoffModal(false);
+    cleanupMedia();
+    navigate(user ? '/dashboard' : '/');
+  };
+
+  useEffect(() => {
+    if (!meetingStartTime) return;
+    const interval = setInterval(() => {
+      const diff = Math.floor((Date.now() - meetingStartTime) / 1000);
+      const m = Math.floor(diff / 60).toString().padStart(2, '0');
+      const s = (diff % 60).toString().padStart(2, '0');
+      const h = Math.floor(diff / 3600);
+      setElapsedTime(h > 0 ? `${h}:${m}:${s}` : `${m}:${s}`);
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [meetingStartTime]);
 
   const createPeer = useCallback((targetId, stream, isIncoming = false, offer = null, peerName = 'Participant') => {
     // If we already have a connection AND this is an outgoing call, skip
@@ -202,8 +239,10 @@ const MeetingRoom = () => {
         });
 
         // When we join, server sends us a list of everyone already in the room
-        socketRef.current.on('existing-users', (users) => {
-          console.log('Existing users in room:', users);
+        socketRef.current.on('room-info', ({ users, startTime, adminId: currentAdmin }) => {
+          console.log('Room info:', users, startTime, currentAdmin);
+          setMeetingStartTime(startTime);
+          setAdminId(currentAdmin);
           users.forEach(({ id: peerId, name }) => {
             setParticipants(prev => {
               if (prev.find(p => p.id === peerId)) return prev;
@@ -212,6 +251,14 @@ const MeetingRoom = () => {
             // Create peer connection and send offer to each existing user
             createPeer(peerId, stream, false, null, name);
           });
+        });
+
+        socketRef.current.on('admin-changed', newAdmin => setAdminId(newAdmin));
+        
+        socketRef.current.on('kicked-from-room', () => {
+          alert('You have been removed from the meeting by the Host.');
+          cleanupMedia();
+          navigate(user ? '/dashboard' : '/');
         });
 
         // A NEW user joined AFTER us
@@ -371,7 +418,6 @@ const MeetingRoom = () => {
     if (chatInput.trim() && socketRef.current) { socketRef.current.emit('send-message', chatInput, userState.name); setChatInput(''); }
   };
 
-  const leaveMeeting = () => { cleanupMedia(); navigate('/'); };
 
   const isMobile = typeof window !== 'undefined' && window.innerWidth <= 768;
   const getGridStyle = (n) => {
@@ -413,11 +459,13 @@ const MeetingRoom = () => {
 
   return (
     <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', backgroundColor: '#0E0E14' }}>
-      {/* Header */}
       <header className="meeting-header">
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', minWidth: 0 }}>
           <div className="meeting-logo" onClick={leaveMeeting}>SS</div>
-          <span className="meeting-room-id">Room: {id}</span>
+          <span className="meeting-room-id hide-mobile">Room: {id}</span>
+          <span style={{ color: 'white', fontWeight: 600, fontSize: '0.9rem', backgroundColor: 'rgba(255,255,255,0.1)', padding: '0.3rem 0.6rem', borderRadius: '8px' }}>
+            {elapsedTime}
+          </span>
           {isRecording && (
             <span style={{ backgroundColor: '#450a0a', color: '#f87171', padding: '0.15rem 0.5rem', borderRadius: '1rem', fontSize: '0.65rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0 }}>
               <span style={{ width: 6, height: 6, borderRadius: '50%', backgroundColor: '#f87171', display: 'inline-block' }} /> REC
@@ -547,19 +595,53 @@ const MeetingRoom = () => {
                 <p style={{ fontSize: '0.7rem', fontWeight: 700, color: 'rgba(255,255,255,0.4)', marginBottom: '0.5rem', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
                   {participants.length} Participant{participants.length !== 1 ? 's' : ''}
                 </p>
-                {participants.map(p => (
-                  <div key={p.id} style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', padding: '0.5rem 0.4rem', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
-                    <div style={{ width: 30, height: 30, backgroundColor: 'var(--primary-purple)', color: 'white', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: '0.8rem', flexShrink: 0 }}>
-                      {p.name.charAt(0).toUpperCase()}
+                {participants.map(p => {
+                  const isUserAdmin = p.id === adminId || (p.isLocal && socketRef.current?.id === adminId);
+                  return (
+                    <div key={p.id} style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', padding: '0.5rem 0.4rem', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+                      <div style={{ width: 30, height: 30, backgroundColor: isUserAdmin ? '#FFD700' : 'var(--primary-purple)', color: isUserAdmin ? '#000' : 'white', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: '0.8rem', flexShrink: 0 }}>
+                        {p.name.charAt(0).toUpperCase()}
+                      </div>
+                      <div style={{ flex: 1 }}>
+                        <p style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.85rem', fontWeight: 600, color: 'white' }}>
+                          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '120px' }}>{p.name} {p.isLocal ? '(You)' : ''}</span>
+                          {isUserAdmin && <span title="Host" style={{ fontSize: '0.7rem' }}>👑</span>}
+                        </p>
+                      </div>
+                      {socketRef.current?.id === adminId && !p.isLocal && (
+                        <button onClick={() => socketRef.current.emit('kick-participant', p.id)} style={{ background: 'rgba(211,47,47,0.15)', color: '#ef4444', border: '1px solid rgba(211,47,47,0.3)', padding: '0.3rem 0.6rem', borderRadius: '12px', fontSize: '0.65rem', fontWeight: 700, cursor: 'pointer' }}>
+                          Remove
+                        </button>
+                      )}
                     </div>
-                    <p style={{ flex: 1, fontSize: '0.85rem', fontWeight: 600, color: 'white' }}>{p.name} {p.isLocal ? '(You)' : ''}</p>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>
         )}
       </main>
+
+      {/* Admin Handoff Modal */}
+      {showHandoffModal && (
+        <div style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100dvh', backgroundColor: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 }}>
+          <div style={{ backgroundColor: 'var(--card-bg)', padding: '2rem', borderRadius: '16px', maxWidth: '400px', width: '90%', border: '1px solid var(--border-color)' }}>
+            <h3 style={{ fontSize: '1.4rem', marginBottom: '0.5rem' }}>Transfer Host Duty</h3>
+            <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginBottom: '1.5rem' }}>
+              Before you leave, you must transfer your admin privileges to another user so the meeting can continue securely.
+            </p>
+            <div style={{ border: '1px solid var(--border-color)', borderRadius: '12px', overflow: 'hidden', marginBottom: '1.5rem' }}>
+              {participants.filter(p => !p.isLocal).map(p => (
+                <div key={p.id} onClick={() => confirmLeaveHandoff(p.id)} style={{ padding: '1rem', borderBottom: '1px solid var(--border-color)', display: 'flex', alignItems: 'center', gap: '0.75rem', cursor: 'pointer', transition: 'background 0.2s' }} onMouseOver={e => e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.05)'} onMouseOut={e => e.currentTarget.style.backgroundColor = 'transparent'}>
+                  <div style={{ width: 32, height: 32, borderRadius: '50%', backgroundColor: 'var(--primary-purple)', color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold' }}>{p.name.charAt(0).toUpperCase()}</div>
+                  <span style={{ fontWeight: 600 }}>{p.name}</span>
+                </div>
+              ))}
+            </div>
+            <button onClick={() => setShowHandoffModal(false)} className="btn-secondary" style={{ width: '100%' }}>Cancel Leave</button>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
