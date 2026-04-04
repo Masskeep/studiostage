@@ -549,7 +549,6 @@ const MeetingRoom = () => {
             {ctrlBtn(micOn, toggleMic, Mic, MicOff, micOn ? 'Mute' : 'Unmute')}
             {ctrlBtn(camOn, toggleCam, Video, VideoOff, camOn ? 'Camera' : 'Camera')}
             <div className="ctrl-divider" />
-            <span className="hide-mobile">{ctrlBtn(!isScreenSharing, handleScreenShare, MonitorUp, MonitorUp, 'Share')}</span>
             <span className="hide-mobile">{ctrlBtn(!isRecording, handleRecord, Circle, Circle, 'Record')}</span>
             <span className="hide-mobile"><div className="ctrl-divider" /></span>
             {ctrlBtn(!isPinMode, () => setPinnedUser(isPinMode ? null : 'me'), LayoutGrid, Maximize2, isPinMode ? 'Grid' : 'Pin')}

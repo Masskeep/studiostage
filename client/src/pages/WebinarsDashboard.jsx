@@ -274,7 +274,7 @@ const WebinarsDashboard = () => {
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2.5rem' }}>
           <div>
             <h1 style={{ fontSize: '2.5rem', marginBottom: '0.4rem' }}>Webinars</h1>
-            <p style={{ color: 'var(--text-secondary)' }}>Host broadcast-style events for large audiences — Zoom-style.</p>
+            <p style={{ color: 'var(--text-secondary)' }}>Host broadcast-style events for large audiences.</p>
           </div>
           <button className="btn-primary" onClick={() => setShowForm(!showForm)} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
             <Plus size={18} /> Schedule Webinar

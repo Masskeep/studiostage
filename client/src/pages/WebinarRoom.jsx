@@ -559,7 +559,6 @@ const WebinarRoom = () => {
                 <CtrlBtn active={!micOn} onClick={toggleMic} ActiveIcon={Mic} InactiveIcon={MicOff} label={micOn ? 'Mute' : 'Unmute'} />
                 <CtrlBtn active={!camOn} onClick={toggleCam} ActiveIcon={Video} InactiveIcon={VideoOff} label={camOn ? 'Stop Cam' : 'Start Cam'} />
                 <div style={{ width: 1, height: 36, backgroundColor: 'rgba(255,255,255,0.2)', margin: '0 0.25rem' }} />
-                <CtrlBtn active={isScreenSharing} onClick={handleScreenShare} ActiveIcon={MonitorUp} label="Share" />
                 <CtrlBtn active={isRecording} onClick={handleRecord} ActiveIcon={Circle} danger={isRecording} label={isRecording ? 'Stop' : 'Record'} />
               </>
             )}
