@@ -10,6 +10,7 @@ import MeetingRoom from './pages/MeetingRoom';
 import MeetingsDashboard from './pages/MeetingsDashboard';
 import WebinarsDashboard from './pages/WebinarsDashboard';
 import WebinarRoom from './pages/WebinarRoom';
+import WebinarLobby from './pages/WebinarLobby';
 import RecordingsPage from './pages/RecordingsPage';
 
 function App() {
@@ -24,6 +25,8 @@ function App() {
             <Route path="/auth" element={<AuthPage />} />
             <Route path="/room/:id/lobby" element={<Lobby />} />
             <Route path="/room/:id" element={<MeetingRoom />} />
+            <Route path="/webinar/:id/lobby" element={<WebinarLobby />} />
+            <Route path="/webinar/:id" element={<WebinarRoom />} />
 
             {/* Protected routes */}
             <Route path="/meetings" element={
@@ -34,9 +37,6 @@ function App() {
             } />
             <Route path="/recordings" element={
               <ProtectedRoute><RecordingsPage /></ProtectedRoute>
-            } />
-            <Route path="/webinar/:id" element={
-              <ProtectedRoute><WebinarRoom /></ProtectedRoute>
             } />
             </Routes>
           </div>

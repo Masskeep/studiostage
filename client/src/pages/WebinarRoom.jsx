@@ -111,12 +111,21 @@ const WebinarRoom = () => {
   const mediaRecorderRef = useRef();
   const recordedChunksRef = useRef([]);
   const recordingStartRef = useRef(null);
-  const [elapsedTime, setElapsedTime] = useState(0);
 
-  // Timer
+  /* ── Server Synchronized State ── */
+  const [adminId, setAdminId] = useState(null);
+  const [startTime, setStartTime] = useState(null);
+  const [elapsedTime, setElapsedTime] = useState(0);
+  const [isKicked, setIsKicked] = useState(false);
+  const [showHandoffModal, setShowHandoffModal] = useState(false);
+  const timerRef = useRef(null);
+
+  const isServerAdmin = adminId === socketRef.current?.id;
+  const isAdmin = isHost || isServerAdmin;
+
+  // Cleanup Timer on unmount
   useEffect(() => {
-    const timer = setInterval(() => setElapsedTime(s => s + 1), 1000);
-    return () => clearInterval(timer);
+    return () => clearInterval(timerRef.current);
   }, []);
 
   const formatTime = (s) => {
@@ -171,9 +180,38 @@ const WebinarRoom = () => {
       setChatMessages(prev => [...prev, data]);
     });
 
+    socketRef.current.on('room-info', ({ adminId: serverAdminId, startTime: serverStartTime }) => {
+      setAdminId(serverAdminId);
+      setStartTime(serverStartTime);
+      if (serverStartTime) {
+        clearInterval(timerRef.current);
+        timerRef.current = setInterval(() => {
+          setElapsedTime(Math.floor((Date.now() - serverStartTime) / 1000));
+        }, 1000);
+      }
+    });
+
+    socketRef.current.on('admin-changed', (newAdminId) => {
+      setAdminId(newAdminId);
+    });
+
+    socketRef.current.on('kicked-from-room', () => {
+      setIsKicked(true);
+      if (userStreamRef.current) userStreamRef.current.getTracks().forEach(t => t.stop());
+      if (localVideoRef.current) localVideoRef.current.srcObject = null;
+      setTimeout(() => {
+        navigate(user ? '/webinars' : '/');
+      }, 4500);
+    });
+
     socketRef.current.on('user-connected', (userId, name) => {
       setAttendeeCount(c => c + 1);
-      setParticipants(prev => [...prev, { id: userId, name, role: 'attendee', handRaised: false }]);
+      setParticipants(prev => {
+        if (!prev.find(p => p.id === userId)) {
+          return [...prev, { id: userId, name, role: 'attendee', handRaised: false }];
+        }
+        return prev;
+      });
     });
 
     socketRef.current.on('user-disconnected', (userId) => {
@@ -300,21 +338,44 @@ const WebinarRoom = () => {
   };
 
   const shareLink = () => {
-    navigator.clipboard.writeText(`${window.location.origin}/webinar/${id}`);
+    navigator.clipboard.writeText(`${window.location.origin}/webinar/${id}/lobby`);
     setLinkCopied(true);
     setTimeout(() => setLinkCopied(false), 2500);
   };
 
   const endWebinar = () => {
+    const others = participants.filter(p => p.id !== 'me' && p.id !== socketRef.current?.id);
+    if (isAdmin && others.length > 0) {
+      setShowHandoffModal(true);
+    } else {
+      if (userStreamRef.current) {
+        userStreamRef.current.getTracks().forEach(t => t.stop());
+        userStreamRef.current = null;
+      }
+      if (localVideoRef.current) {
+        localVideoRef.current.srcObject = null;
+      }
+      socketRef.current?.disconnect();
+      navigate(user ? '/webinars' : '/');
+    }
+  };
+
+  const confirmLeaveHandoff = (nextAdminId) => {
+    if (nextAdminId) {
+      socketRef.current.emit('transfer-admin', nextAdminId);
+    }
+    setShowHandoffModal(false);
     if (userStreamRef.current) {
       userStreamRef.current.getTracks().forEach(t => t.stop());
       userStreamRef.current = null;
     }
-    if (localVideoRef.current) {
-      localVideoRef.current.srcObject = null;
-    }
+    if (localVideoRef.current) localVideoRef.current.srcObject = null;
     socketRef.current?.disconnect();
-    navigate('/webinars');
+    navigate(user ? '/webinars' : '/');
+  };
+
+  const kickUser = (targetId) => {
+    socketRef.current.emit('kick-participant', targetId);
   };
 
   /* ── Render helper: control button ── */
@@ -344,8 +405,77 @@ const WebinarRoom = () => {
   );
 
   /* ─────────────── JSX ─────────────── */
+  if (isKicked) {
+    return (
+      <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', backgroundColor: '#0E0E14', color: 'white' }}>
+        <main className="container" style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <div style={{
+            backgroundColor: '#1E1E24', padding: '3rem', borderRadius: '24px', border: '1px solid rgba(255,255,255,0.05)',
+            textAlign: 'center', maxWidth: '440px', display: 'flex', flexDirection: 'column', alignItems: 'center'
+          }}>
+            <div style={{ padding: '20px', borderRadius: '50%', backgroundColor: 'rgba(211,47,47,0.1)', color: '#F44336', marginBottom: '1.5rem' }}>
+              <AlertCircle size={48} />
+            </div>
+            <h1 style={{ fontSize: '1.8rem', marginBottom: '1rem', fontFamily: 'var(--font-display)' }}>You have been removed</h1>
+            <p style={{ color: 'rgba(255,255,255,0.6)', marginBottom: '2rem', fontSize: '0.95rem', lineHeight: '1.5' }}>
+              The host has removed you from this webinar. You are being securely routed to your homescreen.
+            </p>
+            <div className="loader-spinner" style={{ width: 24, height: 24, border: '2px solid rgba(255,255,255,0.1)', borderTopColor: 'var(--primary-purple)', borderRadius: '50%', animation: 'spin 1s linear infinite' }} />
+            <style>{`
+              @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+            `}</style>
+          </div>
+        </main>
+      </div>
+    );
+  }
+
   return (
     <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', backgroundColor: '#0E0E14' }}>
+      
+      {/* ── Handoff Modal ── */}
+      {showHandoffModal && (
+        <div style={{
+          position: 'fixed', top: 0, left: 0, width: '100%', height: '100%',
+          backgroundColor: 'rgba(0,0,0,0.7)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center'
+        }}>
+          <div style={{ backgroundColor: 'var(--card-bg)', padding: '2rem', borderRadius: '16px', maxWidth: '400px', border: '1px solid var(--border-color)', width: '90%' }}>
+            <h2 style={{ fontSize: '1.4rem', marginBottom: '1rem', color: 'white' }}>Choose Next Admin</h2>
+            <p style={{ color: 'var(--text-secondary)', marginBottom: '1.5rem', fontSize: '0.9rem' }}>
+              You are the current admin. Please designate a new admin before leaving the webinar.
+            </p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', maxHeight: '250px', overflowY: 'auto', marginBottom: '1.5rem' }}>
+              {participants.filter(p => p.id !== 'me' && p.id !== socketRef.current?.id).map((p) => (
+                <button
+                  key={p.id}
+                  onClick={() => confirmLeaveHandoff(p.id)}
+                  style={{
+                    padding: '0.8rem 1rem', display: 'flex', alignItems: 'center', gap: '1rem',
+                    backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: '8px', color: 'white', textAlign: 'left',
+                    transition: 'all 0.2s', border: '1px solid transparent'
+                  }}
+                  onMouseOver={(e) => { e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.1)'; e.currentTarget.style.borderColor = 'var(--primary-purple)'; }}
+                  onMouseOut={(e) => { e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.05)'; e.currentTarget.style.borderColor = 'transparent'; }}
+                >
+                  <div style={{ width: 32, height: 32, backgroundColor: 'var(--primary-purple)', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700 }}>
+                    {p.name.charAt(0).toUpperCase()}
+                  </div>
+                  <span style={{ fontWeight: 600 }}>{p.name} {p.role === 'panelist' && '(Panelist)'}</span>
+                </button>
+              ))}
+            </div>
+            <div style={{ display: 'flex', gap: '1rem' }}>
+              <button onClick={() => setShowHandoffModal(false)} className="btn-secondary" style={{ flex: 1 }}>Cancel</button>
+              <button 
+                onClick={() => confirmLeaveHandoff(null)} 
+                style={{ flex: 1, backgroundColor: '#D32F2F', color: 'white', padding: '0.8rem', borderRadius: '10px', fontWeight: 600, border: 'none', cursor: 'pointer' }}
+              >
+                End for All
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── Top Bar ── */}
       <header style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0.75rem 1.5rem', backgroundColor: '#18181f', borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
@@ -520,18 +650,32 @@ const WebinarRoom = () => {
                 <p style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-secondary)', marginBottom: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
                   {attendeeCount} Participant{attendeeCount !== 1 ? 's' : ''}
                 </p>
-                {participants.map(p => (
+                {participants.map(p => {
+                  const isUserAdminNode = p.id === adminId || (p.id === 'me' && isServerAdmin);
+                  return (
                   <div key={p.id} style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', padding: '0.6rem 0', borderBottom: '1px solid rgba(0,0,0,0.05)' }}>
                     <div style={{ width: 34, height: 34, backgroundColor: 'var(--card-purple-light)', color: 'var(--primary-purple)', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: '0.85rem', flexShrink: 0 }}>
                       {p.name.charAt(0).toUpperCase()}
                     </div>
                     <div style={{ flex: 1 }}>
-                      <p style={{ fontSize: '0.88rem', fontWeight: 600 }}>{p.name} {p.id === 'me' ? '(You)' : ''}</p>
+                      <p style={{ fontSize: '0.88rem', fontWeight: 600 }}>
+                        {p.name} {p.id === 'me' ? '(You)' : ''} 
+                        {isUserAdminNode && <span style={{ marginLeft: '6px', color: 'var(--primary-purple)', fontSize: '0.7rem' }}>(admin)</span>}
+                      </p>
                     </div>
                     <RoleBadge role={p.role} />
                     {p.handRaised && <Hand size={14} style={{ color: '#F59E0B' }} />}
+                    
+                    {isAdmin && p.id !== 'me' && !isUserAdminNode && (
+                      <button 
+                        onClick={() => kickUser(p.id)}
+                        style={{ fontSize: '0.75rem', backgroundColor: 'transparent', color: '#EF4444', border: 'none', cursor: 'pointer', padding: '4px', textDecoration: 'underline' }}
+                      >
+                        Remove
+                      </button>
+                    )}
                   </div>
-                ))}
+                )})}
               </div>
             )}
           </div>
