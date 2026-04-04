@@ -9,7 +9,7 @@ const SERVER_URL = import.meta.env.VITE_SERVER_URL || 'http://localhost:5001';
 const Lobby = () => {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { user } = useAuth();
+  const { user, loading } = useAuth();
 
   const [name, setName] = useState(user?.name || '');
   const [micOn, setMicOn] = useState(true);
@@ -20,7 +20,14 @@ const Lobby = () => {
   const streamRef = useRef(null);
   const [streamObj, setStreamObj] = useState(null);
   const [cameraBlocked, setCameraBlocked] = useState(false);
-  const [showGuestChoice, setShowGuestChoice] = useState(!user);
+  const [showGuestChoice, setShowGuestChoice] = useState(false);
+
+  useEffect(() => {
+    if (!loading) {
+      setShowGuestChoice(!user);
+      if (user && !name) setName(user.name);
+    }
+  }, [user, loading, name]);
 
   useEffect(() => {
     let mounted = true;
@@ -132,6 +139,17 @@ const Lobby = () => {
       alert(`Camera blocked by Chrome (${err.name}: ${err.message}). Are you on HTTP or HTTPS? Have you checked Chrome app permissions?`);
     }
   };
+
+  if (loading) {
+    return (
+      <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', backgroundColor: 'var(--bg-color)' }}>
+        <Navbar />
+        <main style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <p style={{ color: 'var(--text-secondary)', fontWeight: 600 }}>Verifying identity...</p>
+        </main>
+      </div>
+    );
+  }
 
   if (isValidating) {
     return (
