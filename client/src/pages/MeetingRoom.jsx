@@ -56,10 +56,17 @@ const MeetingRoom = () => {
   }, []);
 
   const createPeer = useCallback((targetId, stream, isIncoming = false, offer = null, peerName = 'Participant') => {
-    // Don't create duplicate peer connections
+    // If we already have a connection AND this is an outgoing call, skip
+    // But if incoming (offer), always accept it – close stale connection first
     if (peersRef.current[targetId]?.peerConnection) {
-      console.log(`Peer connection to ${targetId} already exists, skipping`);
-      return peersRef.current[targetId].peerConnection;
+      if (!isIncoming) {
+        console.log(`Outgoing peer to ${targetId} already exists, skipping`);
+        return peersRef.current[targetId].peerConnection;
+      }
+      // Incoming offer: tear down old connection and rebuild
+      console.log(`Replacing stale peer for ${targetId} with fresh incoming offer`);
+      peersRef.current[targetId].peerConnection.close();
+      delete peersRef.current[targetId];
     }
 
     console.log(`Creating peer connection to ${targetId} (incoming: ${isIncoming})`);
@@ -224,11 +231,7 @@ const MeetingRoom = () => {
             if (prev.find(p => p.id === senderId)) return prev;
             return [...prev, { id: senderId, name, isLocal: false }];
           });
-          // If we already have a peer connection, close it first
-          if (peersRef.current[senderId]?.peerConnection) {
-            peersRef.current[senderId].peerConnection.close();
-            delete peersRef.current[senderId];
-          }
+          // createPeer handles stale teardown internally for incoming offers
           createPeer(senderId, stream, true, offer, name);
         });
 
@@ -370,17 +373,19 @@ const MeetingRoom = () => {
 
   const leaveMeeting = () => { cleanupMedia(); navigate('/'); };
 
+  const isMobile = typeof window !== 'undefined' && window.innerWidth <= 768;
   const getGridStyle = (n) => {
     if (n <= 1) return { gridTemplateColumns: '1fr' };
+    if (isMobile) return { gridTemplateColumns: n === 1 ? '1fr' : '1fr 1fr' };
     if (n === 2) return { gridTemplateColumns: '1fr 1fr' };
     if (n <= 4) return { gridTemplateColumns: '1fr 1fr' };
     return { gridTemplateColumns: '1fr 1fr 1fr' };
   };
 
-  const allTiles = [
-    { id: 'me', name: userState.name, stream: userStreamRef.current, isLocal: true },
-    ...Object.entries(remotePeers).map(([pid, { stream, name }]) => ({ id: pid, name, stream, isLocal: false })),
-  ];
+  const allTiles = participants.map(p => {
+    if (p.isLocal) return { id: 'me', name: userState.name, stream: userStreamRef.current, isLocal: true };
+    return { id: p.id, name: p.name, stream: remotePeers[p.id]?.stream || null, isLocal: false };
+  });
 
   const isPinMode = pinnedUser !== null;
   const pinnedTile = isPinMode ? allTiles.find(t => t.id === pinnedUser) : null;
@@ -388,7 +393,7 @@ const MeetingRoom = () => {
 
   const ctrlBtn = (active, onClick, ActiveIcon, InactiveIcon, label) => (
     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '3px' }}>
-      <button onClick={onClick} title={label} style={{
+      <button onClick={onClick} title={label} className="ctrl-btn" style={{
         backgroundColor: active ? 'white' : 'rgba(255,255,255,0.12)',
         color: active ? 'var(--primary-purple)' : 'white',
         borderRadius: '50%', width: 44, height: 44,
@@ -499,6 +504,10 @@ const MeetingRoom = () => {
                   fontWeight: sidePanel === tab.id ? 700 : 500, fontSize: '0.75rem', letterSpacing: '0.05em', transition: 'all 0.15s',
                 }}>{tab.label}</button>
               ))}
+              <button onClick={() => setPanelOpen(false)} style={{
+                background: 'transparent', color: 'rgba(255,255,255,0.5)', padding: '0.8rem',
+                fontSize: '1.2rem', lineHeight: 1, fontWeight: 700, flexShrink: 0,
+              }} title="Close panel">✕</button>
             </div>
 
             {sidePanel === 'chat' && (
