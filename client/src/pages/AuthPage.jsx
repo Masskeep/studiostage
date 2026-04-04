@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { useNavigate, Navigate } from 'react-router-dom';
+import { useNavigate, Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 
 const SERVER_URL = import.meta.env.VITE_SERVER_URL || 'http://localhost:5001';
@@ -12,8 +12,11 @@ const AuthPage = () => {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
+  const location = useLocation();
+  const returnTo = location.state?.returnTo || '/';
+
   // Already logged in
-  if (user) return <Navigate to="/" replace />;
+  if (user) return <Navigate to={returnTo} replace />;
 
   const handleChange = (e) => {
     setFormData({ ...formData, [e.target.name]: e.target.value });
@@ -41,7 +44,7 @@ const AuthPage = () => {
         setError(data.msg || 'Something went wrong');
       } else {
         login(data.token, data.user);
-        navigate('/');
+        navigate(returnTo);
       }
     } catch (err) {
       setError('Cannot connect to server. Make sure the backend is running.');

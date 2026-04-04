@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { Mic, MicOff, Video, VideoOff, Settings } from 'lucide-react';
 import Navbar from '../components/Navbar';
 import { useAuth } from '../context/AuthContext';
@@ -20,6 +20,7 @@ const Lobby = () => {
   const streamRef = useRef(null);
   const [streamObj, setStreamObj] = useState(null);
   const [cameraBlocked, setCameraBlocked] = useState(false);
+  const [showGuestChoice, setShowGuestChoice] = useState(!user);
 
   useEffect(() => {
     let mounted = true;
@@ -157,6 +158,38 @@ const Lobby = () => {
             <button className="btn-primary" onClick={() => navigate('/dashboard')} style={{ width: '100%' }}>
               Return to Dashboard
             </button>
+          </div>
+        </main>
+      </div>
+    );
+  }
+
+  if (showGuestChoice) {
+    return (
+      <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', backgroundColor: 'var(--bg-color)' }}>
+        <Navbar />
+        <main className="container" style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <div style={{
+            backgroundColor: 'var(--card-bg)', padding: '3rem', borderRadius: '24px',
+            border: '1px solid var(--border-color)', textAlign: 'center', maxWidth: '440px',
+            boxShadow: '0 20px 60px rgba(0,0,0,0.08)', animation: 'fadeIn 0.5s ease'
+          }}>
+            <h1 style={{ fontSize: '1.8rem', marginBottom: '0.5rem', fontFamily: 'var(--font-display)' }}>Join Meeting</h1>
+            <p style={{ color: 'var(--text-secondary)', marginBottom: '2.5rem', fontSize: '0.95rem' }}>
+              You are not logged in. How would you like to join this meeting?
+            </p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+              <button
+                onClick={() => navigate('/auth', { state: { returnTo: `/room/${id}/lobby` } })}
+                className="btn-primary" style={{ padding: '1.1rem', fontSize: '1rem' }}>
+                Log In or Sign Up
+              </button>
+              <button
+                onClick={() => setShowGuestChoice(false)}
+                className="btn-secondary" style={{ padding: '1.1rem', fontSize: '1rem' }}>
+                Join as Guest Directly
+              </button>
+            </div>
           </div>
         </main>
       </div>

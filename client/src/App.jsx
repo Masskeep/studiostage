@@ -22,6 +22,8 @@ function App() {
             {/* Public routes */}
             <Route path="/" element={<LandingPage />} />
             <Route path="/auth" element={<AuthPage />} />
+            <Route path="/room/:id/lobby" element={<Lobby />} />
+            <Route path="/room/:id" element={<MeetingRoom />} />
 
             {/* Protected routes */}
             <Route path="/meetings" element={
@@ -35,12 +37,6 @@ function App() {
             } />
             <Route path="/webinar/:id" element={
               <ProtectedRoute><WebinarRoom /></ProtectedRoute>
-            } />
-            <Route path="/room/:id/lobby" element={
-              <ProtectedRoute><Lobby /></ProtectedRoute>
-            } />
-            <Route path="/room/:id" element={
-              <ProtectedRoute><MeetingRoom /></ProtectedRoute>
             } />
             </Routes>
           </div>
