@@ -34,6 +34,7 @@ const MeetingRoom = () => {
   const [meetingStartTime, setMeetingStartTime] = useState(null);
   const [elapsedTime, setElapsedTime] = useState('00:00');
   const [showHandoffModal, setShowHandoffModal] = useState(false);
+  const [isKicked, setIsKicked] = useState(false);
 
   const socketRef = useRef();
   const userStreamRef = useRef();
@@ -67,7 +68,7 @@ const MeetingRoom = () => {
       setShowHandoffModal(true);
     } else {
       cleanupMedia();
-      navigate(user ? '/dashboard' : '/');
+      navigate(user ? '/meetings' : '/');
     }
   }, [navigate, cleanupMedia, user, adminId, participants]);
 
@@ -77,7 +78,7 @@ const MeetingRoom = () => {
     }
     setShowHandoffModal(false);
     cleanupMedia();
-    navigate(user ? '/dashboard' : '/');
+    navigate(user ? '/meetings' : '/');
   };
 
   useEffect(() => {
@@ -256,9 +257,11 @@ const MeetingRoom = () => {
         socketRef.current.on('admin-changed', newAdmin => setAdminId(newAdmin));
         
         socketRef.current.on('kicked-from-room', () => {
-          alert('You have been removed from the meeting by the Host.');
+          setIsKicked(true);
           cleanupMedia();
-          navigate(user ? '/dashboard' : '/');
+          setTimeout(() => {
+            navigate(user ? '/meetings' : '/');
+          }, 4500);
         });
 
         // A NEW user joined AFTER us
@@ -457,6 +460,25 @@ const MeetingRoom = () => {
     else { setSidePanel(panel); setPanelOpen(true); }
   };
 
+  if (isKicked) {
+    return (
+      <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', backgroundColor: '#0E0E14', alignItems: 'center', justifyContent: 'center' }}>
+        <div style={{ backgroundColor: 'var(--card-bg)', padding: '3rem', borderRadius: '24px', border: '1px solid var(--border-color)', textAlign: 'center', maxWidth: '440px', boxShadow: '0 20px 60px rgba(0,0,0,0.5)', animation: 'fadeIn 0.5s ease' }}>
+          <div style={{ width: 64, height: 64, backgroundColor: 'rgba(211,47,47,0.15)', color: '#ef4444', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 1.5rem' }}>
+            <PhoneOff size={32} />
+          </div>
+          <h1 style={{ fontSize: '1.8rem', marginBottom: '0.5rem', fontFamily: 'var(--font-display)', color: 'white' }}>Removed</h1>
+          <p style={{ color: 'rgba(255,255,255,0.6)', marginBottom: '1rem', fontSize: '0.95rem' }}>
+            You have been securely removed from this meeting by the administrator. 
+          </p>
+          <div style={{ display: 'flex', justifyContent: 'center', marginTop: '1.5rem' }}>
+            <div style={{ width: 24, height: 24, border: '3px solid rgba(255,255,255,0.1)', borderTop: '3px solid var(--primary-purple)', borderRadius: '50%', animation: 'spin 1s linear infinite' }} />
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', backgroundColor: '#0E0E14' }}>
       <header className="meeting-header">
@@ -605,7 +627,7 @@ const MeetingRoom = () => {
                       <div style={{ flex: 1 }}>
                         <p style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.85rem', fontWeight: 600, color: 'white' }}>
                           <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '120px' }}>{p.name} {p.isLocal ? '(You)' : ''}</span>
-                          {isUserAdmin && <span title="Host" style={{ fontSize: '0.7rem' }}>👑</span>}
+                          {isUserAdmin && <span style={{ fontSize: '0.75rem', color: '#FFD700', fontWeight: 700 }}>(admin)</span>}
                         </p>
                       </div>
                       {socketRef.current?.id === adminId && !p.isLocal && (

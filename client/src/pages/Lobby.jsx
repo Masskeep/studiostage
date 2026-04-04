@@ -155,8 +155,8 @@ const Lobby = () => {
             </div>
             <h2 style={{ fontSize: '1.5rem', marginBottom: '1rem' }}>Meeting Not Found</h2>
             <p style={{ color: 'var(--text-secondary)', marginBottom: '2rem' }}>{meetingError}</p>
-            <button className="btn-primary" onClick={() => navigate('/dashboard')} style={{ width: '100%' }}>
-              Return to Dashboard
+            <button className="btn-primary" onClick={() => navigate(user ? '/meetings' : '/')} style={{ width: '100%' }}>
+              Return Home
             </button>
           </div>
         </main>
