@@ -118,6 +118,20 @@ const Lobby = () => {
     navigate(`/room/${id}`, { state: { name: name.trim(), micOn, camOn } });
   };
 
+  const handleAudioJoin = () => {
+    if (!name.trim()) return alert('Please enter your display name');
+    
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(track => track.stop());
+      streamRef.current = null;
+    }
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
+
+    navigate(`/room/${id}`, { state: { name: name.trim(), micOn, camOn: false } });
+  };
+
   const requestMediaAccess = async () => {
     try {
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
@@ -302,9 +316,6 @@ const Lobby = () => {
                   {on ? <On size={20} /> : <Off size={20} />}
                 </button>
               ))}
-              <button style={{ background: 'white', color: 'var(--primary-purple)', borderRadius: '50%', width: 44, height: 44, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                <Settings size={20} />
-              </button>
             </div>
           </div>
 
@@ -322,7 +333,7 @@ const Lobby = () => {
                 style={{ width: '100%', padding: '0.9rem 1rem', borderRadius: '10px', border: '1px solid var(--border-color)', backgroundColor: 'var(--bg-color)', fontSize: '1rem', fontFamily: 'inherit' }}
               />
             </div>
-            <button className="btn-secondary" style={{ padding: '0.9rem 1.5rem', whiteSpace: 'nowrap' }}>Audio Only</button>
+            <button onClick={handleAudioJoin} className="btn-secondary" style={{ padding: '0.9rem 1.5rem', whiteSpace: 'nowrap' }}>Audio Only</button>
             <button className="btn-primary" onClick={handleJoin} style={{ padding: '0.9rem 2rem', whiteSpace: 'nowrap' }}>Join Now</button>
           </div>
         </div>
